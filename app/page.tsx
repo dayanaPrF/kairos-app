@@ -1,65 +1,45 @@
-import Image from "next/image";
+import Image from 'next/image'; // Importamos la herramienta para imágenes de Next.js
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+    <>
+      <div id="screen-login" className="screen active">
+        <div className="login-hero">
+          <div className="hero-logo">
+            <Image 
+              src="/logo_kairos.png"
+              alt="Kairós Logo"
+              width={180} 
+              height={180}
+              className="mx-auto"
+              priority 
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <div className="hero-tag">Movimiento medido, progreso real</div>
+          </div>
+          <div className="hero-desc">Tu plataforma de rehabilitación física personalizada. Sigue tus rutinas, monitorea tu progreso y comunícate con tu fisioterapeuta.</div>
+          <div className="hero-pills">
+            <div className="hero-pill">🏋️ Rutinas guiadas</div>
+            <div className="hero-pill">📊 Seguimiento real</div>
+            <div className="hero-pill">👨‍⚕️ Con tu fisio</div>
+          </div>
         </div>
-      </main>
-    </div>
+        <div className="login-form-wrap">
+          <div className="login-form">
+            <h2>¡Bienvenido!</h2>
+            <p className="sub">Ingresa tus datos para continuar tu tratamiento</p>
+            <div className="field-label">Correo electrónico</div>
+            <div className="field-wrap"><span className="ficon">📧</span><input type="email" id="login-email" placeholder="tu@correo.com" /></div>
+            <div className="field-label">Contraseña</div>
+            <div className="field-wrap"><span className="ficon">🔒</span><input type="password" id="login-pass" placeholder="••••••••" /></div>
+            <div className="login-links-row"><a href="#">¿Olvidaste tu contraseña?</a><a href="#">¿No tienes cuenta?</a></div>
+            {/* Ojo: onckick no funciona en Next.js, lo quitamos por ahora */}
+            <button className="btn-login">Ingresar →</button>
+            <div className="or-divider">o continúa con</div>
+            <button className="btn-social"><div className="s-icon g-ico">G</div> Iniciar sesión con Google</button>
+            <button className="btn-social"><div className="s-icon f-ico">f</div> Iniciar sesión con Facebook</button>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
