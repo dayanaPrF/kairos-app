@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image'; 
 
 export default function RegistroPage() {
     // --- ESTADOS DE FLUJO ---
@@ -135,7 +136,17 @@ export default function RegistroPage() {
                 <div className="kr-left">
                     <div className="kr-brand">
                         <div className="kr-brand-dot" />
-                        <div className="kr-brand-name">Kairós</div>
+                       {/* <div className="kr-brand-name">Kairós</div>*/}
+                       <div className="kr-logo">
+                            <Image
+                                src="/kairos-title.png"
+                                alt="Kairós Logo"
+                                width={70} 
+                                height={70}
+                                className="mx-auto"
+                                priority
+                            />
+                       </div>
                     </div>
 
                     <div className="kr-steps">
@@ -199,7 +210,7 @@ export default function RegistroPage() {
                                         <label>1er Apellido *</label>
                                         <div className="fld-wrap">
                                             <span className="ico">👤</span>
-                                            <input type="text" placeholder="1er paterno" required value={primerApellido} onChange={(e) => setPrimerApellido(e.target.value)} />
+                                            <input type="text" placeholder="1er apellido" required value={primerApellido} onChange={(e) => setPrimerApellido(e.target.value)} />
                                         </div>
                                     </div>
                                 </div>
@@ -234,9 +245,16 @@ export default function RegistroPage() {
                                         <input type="password" placeholder="Mínimo 8 caracteres" required value={password} onChange={(e) => setPassword(e.target.value)} />
                                     </div>
                                 </div>
-                                <div className="kr-terms">
-                                    <input type="checkbox" id="terms" checked={aceptaTerminos} onChange={(e) => setAceptaTerminos(e.target.checked)} />
-                                    <label htmlFor="terms">Acepto los Términos y Políticas</label>
+                               <div className="kr-terms">
+                                    <input 
+                                        type="checkbox" 
+                                        id="terms" 
+                                        checked={aceptaTerminos} 
+                                        onChange={(e) => setAceptaTerminos(e.target.checked)} 
+                                    />
+                                    <label htmlFor="terms">
+                                        Acepto los <a href="/terminos-politicas">Términos y Políticas</a>
+                                    </label>
                                 </div>
                                 {mensaje && <div className={`kr-msg-${mensaje.tipo}`}>{mensaje.texto}</div>}
                                 <button type="submit" className="btn-register" disabled={cargando}>
