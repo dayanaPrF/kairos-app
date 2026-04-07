@@ -111,7 +111,6 @@ export default function Home() {
                     </div>
                     
                     <div className="login-links-row">
-                        <a href="#">¿Olvidaste tu contraseña?</a>
                         <a href="/registro">¿No tienes cuenta?</a>
                     </div>
 
