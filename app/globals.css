@@ -381,6 +381,17 @@ html, body {
   overflow: hidden;         /* Para que las esquinas del hero no se salgan */
 }
 
+.kr-card-small {
+  background: white;
+  width: 100%;
+  max-width: 1000px;        /* Ancho máximo para que no se vea gigante en monitores pro */
+  min-height: 400px;        /* Altura mínima para que respire el diseño */
+  display: flex;            /* Panel izquierdo y derecho juntos */
+  border-radius: 30px;      /* Bordes muy redondeados como en tu diseño */
+  box-shadow: var(--shadow-lg); /* La sombra que definimos en :root */
+  overflow: hidden;         /* Para que las esquinas del hero no se salgan */
+}
+
 .kr-root {
   min-height: 100vh;         /* Ocupa el 100% de la altura de la pantalla */
   width: 100%;
@@ -546,3 +557,4 @@ html, body {
 .btn-back:hover { color: var(--blue); text-decoration: underline; }
 .kr-final-preview { background: var(--blue-xlight); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border); }
 .kr-final-preview p { font-size: 0.9rem; color: var(--text-mid); line-height: 1.5; }
+

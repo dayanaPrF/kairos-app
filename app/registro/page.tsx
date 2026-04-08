@@ -40,7 +40,7 @@ export default function RegistroPage() {
     const validarEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     const validarSoloLetras = (texto: string) => /^[a-zA-ZñÑáéíóúÁÉÍÓÚüÜ\s]+$/.test(texto);
     const validarPasswordRobusta = (password: string) => /^(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$/.test(password);
-    const validarTipoSangre = (sangre: string) => /^(A|B|AB|O)[+-]$/i.test(sangre);
+    const validarTipoSangre = (sangre: string) => /^(A|B|AB|O|BA)[+-]$/i.test(sangre);
 
     // --- MANEJADOR DE CAMBIOS EN TIEMPO REAL ---
     const manejarCambio = (campo: string, valor: string, setter: Function) => {

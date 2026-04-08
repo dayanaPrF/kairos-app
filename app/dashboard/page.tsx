@@ -3,97 +3,256 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 
-export default function Dashboard() {
+export default function DashboardRedirect() {
     const [user, setUser] = useState<any>(null);
-    const [tienePerfil, setTienePerfil] = useState<boolean | null>(null); // null = cargando
+    const [cargando, setCargando] = useState(true);
+    const [paso, setPaso] = useState(1);
+    const [rolSeleccionado, setRolSeleccionado] = useState<'paciente' | 'fisioterapeuta' | null>(null);
+    
+    // --- ESTADOS PARA DATOS ---
+    const [datoExtra, setDatoExtra] = useState(''); // NSS o Cédula
+    const [tipoSangre, setTipoSangre] = useState('O+');
+    const [universidad, setUniversidad] = useState('');
+    const [especialidad, setEspecialidad] = useState('');
+    const [experiencia, setExperiencia] = useState('');
+    
+    const [enviando, setEnviando] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [errorExp, setErrorExp] = useState<string | null>(null);
+    const [errorEsp, setErrorEsp] = useState<string | null>(null);
+    
     const router = useRouter();
 
     useEffect(() => {
         const checkUserAndProfile = async () => {
-            // 1. Obtener el usuario autenticado
             const { data: { user } } = await supabase.auth.getUser();
-            
-            if (user) {
-                setUser(user);
+            if (!user) { router.push('/'); return; }
+            setUser(user);
 
-                // 2. BUSCAR si ya existe en la tabla PACIENTE o FISIOTERAPEUTA
-                const { data: esPaciente } = await supabase.from('paciente').select('id_paciente').eq('id_paciente', user.id).single();
-                const { data: esFisio } = await supabase.from('fisioterapeuta').select('id_fisioterapeuta').eq('id_fisioterapeuta', user.id).single();
+            const { data: paciente } = await supabase.from('paciente').select('id_paciente').eq('id_paciente', user.id).maybeSingle();
+            if (paciente) { router.push('/paciente'); return; }
 
-                if (esPaciente || esFisio) {
-                    setTienePerfil(true);
-                    // Si ya tiene perfil, podrías redirigirlo a su dashboard real aquí
-                    // router.push(esPaciente ? '/dashboard/paciente' : '/dashboard/fisio');
-                } else {
-                    setTienePerfil(false);
-                }
-            } else {
-                router.push('/'); // Si no hay usuario, mandarlo al login
-            }
+            const { data: fisio } = await supabase.from('fisioterapeuta').select('id_fisioterapeuta').eq('id_fisioterapeuta', user.id).maybeSingle();
+            if (fisio) { router.push('/fisio'); return; }
+
+            setCargando(false);
         };
         checkUserAndProfile();
     }, [router]);
 
-    const registrarRol = async (rol: 'paciente' | 'fisioterapeuta') => {
-        // Obtenemos los datos del metadata si existen (para Google/FB)
-        const nombreMeta = user.user_metadata?.full_name?.split(' ')[0] || '';
-        const apellidoMeta = user.user_metadata?.full_name?.split(' ')[1] || '';
+    // VALIDACIÓN IDENTIFICADOR (NSS/Cédula)
+    useEffect(() => {
+        if (datoExtra === '') { setError(null); return; }
 
-        // 1. Upsert en PERFIL (usa upsert para que si ya existe por registro normal, solo actualice)
-        const { error: errorPerfil } = await supabase.from('perfil').upsert({
+        if (rolSeleccionado === 'fisioterapeuta') {
+            if (!/^[0-9]{7,8}$/.test(datoExtra)) {
+                setError('La cédula debe tener entre 7 y 8 dígitos numéricos.');
+            } else { setError(null); }
+        } else {
+            if (!/^[0-9]{11}$/.test(datoExtra)) {
+                setError('El NSS debe tener exactamente 11 dígitos numéricos.');
+            } else { setError(null); }
+        }
+    }, [datoExtra, rolSeleccionado]);
+
+    // VALIDACIÓN ESPECIALIDAD (Solo letras)
+    useEffect(() => {
+        if (especialidad !== '' && !/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]*$/.test(especialidad)) {
+            setErrorEsp('La especialidad solo puede contener letras.');
+        } else { setErrorEsp(null); }
+    }, [especialidad]);
+
+    // VALIDACIÓN EXPERIENCIA (Números 0-60)
+    useEffect(() => {
+        if (experiencia === '') { setErrorExp(null); return; }
+        const n = Number(experiencia);
+        if (isNaN(n) || n < 0 || n > 60) {
+            setErrorExp('Ingresa un número válido (0-60).');
+        } else { setErrorExp(null); }
+    }, [experiencia]);
+
+    const prepararRegistro = (rol: 'paciente' | 'fisioterapeuta') => {
+        setRolSeleccionado(rol);
+        setPaso(2);
+    };
+
+    const finalizarRegistro = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (error || errorExp || errorEsp || datoExtra === '') return; 
+        
+        setEnviando(true);
+        const nombres = user.user_metadata?.full_name?.split(' ') || [];
+        const nombreMeta = nombres[0] || '';
+        const apellidoMeta = nombres[1] || '';
+
+        await supabase.from('perfil').upsert({
             id_perfil: user.id,
             nombre: nombreMeta,
             primer_apellido: apellidoMeta,
             correo_electronico: user.email,
-            provider: user.app_metadata.provider || 'email'
         });
 
-        if (errorPerfil) {
-            console.error("Error al crear perfil:", errorPerfil.message);
-            return;
-        }
-
-        // 2. Insertar en la tabla específica
-        const { error: errorRol } = await supabase.from(rol).insert({
-            [`id_${rol}`]: user.id 
-        });
-        
-        if (!errorRol) {
-            alert(`¡Configurado como ${rol}!`);
-            setTienePerfil(true);
-            // router.push(rol === 'paciente' ? '/dashboard/paciente' : '/dashboard/fisio');
+        if (rolSeleccionado === 'fisioterapeuta') {
+            await supabase.from('fisioterapeuta').insert({
+                id_fisioterapeuta: user.id,
+                cedula_profesional: datoExtra,
+                universidad_egreso: universidad,
+                especialidad: especialidad,
+                anios_experiencia: parseInt(experiencia) || 0
+            });
         } else {
-            console.error("Error al asignar rol:", errorRol.message);
+            await supabase.from('paciente').insert({
+                id_paciente: user.id,
+                nss: datoExtra,
+                tipo_sangre: tipoSangre
+            });
         }
+        router.push(rolSeleccionado === 'paciente' ? '/paciente' : '/fisio');
     };
 
-    // Mientras revisamos la base de datos...
-    if (tienePerfil === null || !user) return <div className="p-8">Cargando sesión...</div>;
-
-    // Si YA tiene perfil, mostramos el contenido del Dashboard
-    if (tienePerfil) {
+    if (cargando) {
         return (
-            <div className="p-8">
-                <h1 className="text-2xl font-bold">Bienvenido de nuevo, {user.user_metadata?.full_name || user.email}</h1>
-                <p className="mt-4">Aquí va tu contenido de Kairós para usuarios registrados.</p>
+            <div className="kr-root" style={{display:'flex', alignItems:'center', justifyContent:'center'}}>
+                <p>Cargando Kairós...</p>
             </div>
         );
     }
 
-    // Si NO tiene perfil (es de Google/FB nuevo), mostramos la elección
     return (
-        <div className="p-8 text-center">
-            <h1 className="text-2xl font-bold">¡Hola! Es tu primera vez aquí</h1>
-            <p className="mt-4">Para continuar en Kairós, necesitamos saber:</p>
-            <h2 className="text-xl mt-2 font-semibold">¿Cuál es tu función?</h2>
-            
-            <div className="flex justify-center gap-4 mt-6">
-                <button onClick={() => registrarRol('paciente')} className="btn-social">
-                    Soy Paciente
-                </button>
-                <button onClick={() => registrarRol('fisioterapeuta')} className="btn-social">
-                    Soy Fisioterapeuta
-                </button>
+        <div className="kr-root">
+            <div className="kr-card">
+                <div className="kr-left">
+                    <div className="kr-logo"><img src="/kairos-title.png" alt="Kairós Logo" /></div>
+                    <div className="kr-steps">
+                        <div className={`kr-step ${paso === 1 ? 'active' : ''}`}>
+                            <div className="kr-step-num">1</div>
+                            <div className="kr-step-info">
+                                <span className="kr-step-label">Configuración</span>
+                                <h3 className="kr-step-title">Tu identidad</h3>
+                            </div>
+                        </div>
+                        <div className="kr-connector"></div>
+                        <div className={`kr-step ${paso === 2 ? 'active' : ''}`}>
+                            <div className="kr-step-num">2</div>
+                            <div className="kr-step-info">
+                                <span className="kr-step-label">Validación</span>
+                                <h3 className="kr-step-title">Datos específicos</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div><span className="kr-footer-label">Kairós Salud</span><p className="kr-footer-sub">Seguridad activa.</p></div>
+                </div>
+
+                <div className="kr-right">
+                    {paso === 1 ? (
+                        <div className="animate-fade-in">
+                            <div className="kr-header">
+                                <div className="kr-badge"><span className="kr-badge-dot"></span>Paso inicial</div>
+                                <h2>¡Hola, {user.user_metadata?.full_name?.split(' ')[0]}!</h2>
+                                <p>Selecciona tu perfil en <strong>Kairós</strong>:</p>
+                            </div>
+                            <div className="kr-role-list">
+                                <div className="kr-role-opt" onClick={() => prepararRegistro('paciente')}>
+                                    <span className="ico">🧘‍♂️</span>
+                                    <div><h3>Soy Paciente</h3><p>Realizaré ejercicios y veré mi progreso.</p></div>
+                                    <span className="check">→</span>
+                                </div>
+                                <div className="kr-role-opt" onClick={() => prepararRegistro('fisioterapeuta')}>
+                                    <span className="ico">⚕️</span>
+                                    <div><h3>Soy Fisioterapeuta</h3><p>Gestionaré pacientes y crearé rutinas.</p></div>
+                                    <span className="check">→</span>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="animate-fade-in">
+                            <div className="kr-header">
+                                <button onClick={() => {setPaso(1); setDatoExtra(''); setError(null);}} style={{border:'none', background:'none', cursor:'pointer', color:'var(--blue)', fontWeight:700, marginBottom:'10px'}}>
+                                    ← Volver
+                                </button>
+                                <h2>¡Casi listo!</h2>
+                                <p>Perfil: <strong>{rolSeleccionado === 'paciente' ? 'Paciente' : 'Fisioterapeuta'}</strong></p>
+                            </div>
+
+                            <form onSubmit={finalizarRegistro} className="kr-fields" style={{marginTop:'20px'}}>
+                                <div className="fld">
+                                    <label>{rolSeleccionado === 'fisioterapeuta' ? 'Cédula Profesional' : 'Número de Seguro Social (NSS)'}</label>
+                                    <div className="fld-wrap">
+                                        <span className="ico">📋</span>
+                                        <input 
+                                            type="text" required 
+                                            placeholder={rolSeleccionado === 'fisioterapeuta' ? "Ej. 12345678" : "Ej. 12345678901"}
+                                            value={datoExtra}
+                                            onChange={(e) => { if (/^\d*$/.test(e.target.value)) setDatoExtra(e.target.value); }}
+                                            className={error ? 'input-error' : ''}
+                                        />
+                                    </div>
+                                    {error && <p className="kr-msg-error">{error}</p>}
+                                </div>
+
+                                {rolSeleccionado === 'paciente' ? (
+                                    <div className="fld">
+                                        <label>Tipo de Sangre</label>
+                                        <div className="fld-wrap">
+                                            <select 
+                                                value={tipoSangre} 
+                                                onChange={(e) => setTipoSangre(e.target.value)}
+                                                style={{width: '100%', padding: '10px', borderRadius: '8px', border: '1.5px solid var(--border)', background: 'white'}}
+                                            >
+                                                {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(t => <option key={t} value={t}>{t}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="fld">
+                                            <label>Universidad de Egreso</label>
+                                            <div className="fld-wrap">
+                                                <span className="ico">🎓</span>
+                                                <input type="text" required placeholder="Nombre de la institución" value={universidad} onChange={(e) => setUniversidad(e.target.value)} />
+                                            </div>
+                                        </div>
+                                        <div className="fld">
+                                            <label>Especialidad</label>
+                                            <div className="fld-wrap">
+                                                <span className="ico">✨</span>
+                                                <input 
+                                                    type="text" placeholder="Ej. Rehabilitación" 
+                                                    value={especialidad} 
+                                                    onChange={(e) => setEspecialidad(e.target.value)}
+                                                    className={errorEsp ? 'input-error' : ''}
+                                                />
+                                            </div>
+                                            {errorEsp && <p className="kr-msg-error">{errorEsp}</p>}
+                                        </div>
+                                        <div className="fld">
+                                            <label>Años de Experiencia</label>
+                                            <div className="fld-wrap">
+                                                <span className="ico">⏳</span>
+                                                <input 
+                                                    type="text" required placeholder="Años" 
+                                                    value={experiencia} 
+                                                    onChange={(e) => { if (/^\d*$/.test(e.target.value)) setExperiencia(e.target.value); }} 
+                                                    className={errorExp ? 'input-error' : ''}
+                                                />
+                                            </div>
+                                            {errorExp && <p className="kr-msg-error">{errorExp}</p>}
+                                        </div>
+                                    </>
+                                )}
+
+                                <button 
+                                    type="submit" 
+                                    className="btn-register" 
+                                    disabled={enviando || !!error || !!errorExp || !!errorEsp || datoExtra === ''} 
+                                    style={{marginTop:'20px', width:'100%', opacity: (enviando || !!error || !!errorExp || !!errorEsp || datoExtra === '') ? 0.6 : 1}}
+                                >
+                                    {enviando ? 'Guardando...' : 'Finalizar registro ✓'}
+                                </button>
+                            </form>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
