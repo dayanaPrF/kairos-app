@@ -1,127 +1,413 @@
 'use client'
-import React, { useState, ReactNode } from 'react';
-import { 
-  Home, Dumbbell, Calendar, BarChart3, User, 
-  Settings, LogOut, Bell, Search, PlayCircle 
-} from 'lucide-react';
 
-/* --- Interfaces para TypeScript (Evita el error de 'any') --- */
-interface NavLinkProps {
-  icon: ReactNode;
-  label: string;
-  active?: boolean;
-}
+import { useEffect, useState } from 'react'
+import { supabase } from '../../../lib/supabase'
+import Image from 'next/image'; 
 
-interface PhaseItemProps {
-  name: string;
-  progress: number;
-  status: string;
-  color: string;
-  muted?: boolean;
-}
+type Section = 'home' | 'rutina' | 'citas' | 'progreso'
 
-/* --- Subcomponentes usando tus clases de globals.css --- */
-const NavLink = ({ icon, label, active = false }: NavLinkProps) => (
-  <button className={`nav-item ${active ? 'active' : ''}`}>
-    <span className="nico">{icon}</span>
-    {label}
-  </button>
-);
+export default function PacientePage() {
+  const [userName, setUserName] = useState('Paciente')
+  const [activeSection, setActiveSection] = useState<Section>('home')
 
-const PhaseItem = ({ name, progress, status, color, muted = false }: PhaseItemProps) => (
-  <div className="phase-list" style={{ opacity: muted ? 0.5 : 1 }}>
-    <div className="phase-row">
-      <div className="ph-info">
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <strong style={{ color: 'var(--text)', fontSize: '0.85rem' }}>{name}</strong>
-          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: color.includes('--') ? `var(${color})` : color }}>
-            {status}
-          </span>
-        </div>
-        <div className="st-bar" style={{ marginTop: '8px' }}>
-          <div 
-            className="st-bar-fill" 
-            style={{ 
-              width: `${progress}%`,
-              background: color.includes('--') ? `var(${color})` : color 
-            }}
-          ></div>
-        </div>
-      </div>
-    </div>
-  </div>
-);
+  useEffect(() => {
+    const getProfile = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        setUserName(user.user_metadata?.full_name?.split(' ')[0] || 'Paciente')
+      }
+    }
+    getProfile()
+  }, [])
 
-export default function PacienteDashboard() {
-  const [userName] = useState('Dayana');
+  const todayStr = new Date().toLocaleDateString('es-MX', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+
+  const navItems: { key: Section; icon: string; label: string }[] = [
+    { key: 'home',     icon: '🏠', label: 'Principal' },
+    { key: 'rutina',   icon: '🏋️', label: 'Mi Rutina'  },
+    { key: 'citas',    icon: '📅', label: 'Mis Citas'  },
+    { key: 'progreso', icon: '📊', label: 'Progreso'   },
+  ]
 
   return (
-    <div id="app" className="active" style={{ background: 'var(--bg)', minHeight: '100vh' }}>
-      
-      {/* HEADER */}
-      <header className="top-header">
-        <div className="header-brand">
-            <div style={{
-               width: '32px', height: '32px', background: 'linear-gradient(135deg, var(--blue), var(--lime))',
-               borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-               color: 'white', fontWeight: '900'
-             }}>K</div>
-            <span className="bname">Kairós</span>
+    <div className="dash-root">
+
+      {/* ── SIDEBAR ── */}
+      <aside className="dash-sidebar">
+        <div className="dash-sidebar-brand">
+          <div className="dash-logo">
+              <Image
+                src="/logo_kairos.png"
+                alt="Kairós Logo"
+                width={70} 
+                height={70}
+                className="mx-auto"
+                priority
+              />
+                                  </div>
+          <div className="dash-brand-tag">Plataforma de rehabilitación</div>
         </div>
 
-        <div className="header-search">
-          <span className="sico"><Search size={16}/></span>
-          <input type="text" placeholder="Buscar ejercicios..." />
+        
+
+        <nav className="dash-sidebar-nav">
+          {navItems.map(({ key, icon, label }) => (
+            <button
+              key={key}
+              className={`dash-nav-item ${activeSection === key ? 'active' : ''}`}
+              onClick={() => setActiveSection(key)}
+            >
+              <span className="dash-nav-icon">{icon}</span>
+              {label}
+              {activeSection === key && <div className="dash-nav-dot" />}
+            </button>
+          ))}
+        </nav>
+
+        <div className="dash-sidebar-footer">
+          <div className="dash-sf-hint">Semana 6 de 12 · Plan de rehabilitación de hombro</div>
         </div>
+      </aside>
 
-        <div className="header-right">
-          <button className="hbtn"><Bell size={20}/><div className="notif-badge"></div></button>
-          <div className="user-chip">
-            <div className="user-avatar">{userName.charAt(0)}</div>
-            <span className="ucname">{userName} P.</span>
+      {/* ── MAIN ── */}
+      <div className="dash-main">
+
+        {/* TOPBAR */}
+        <header className="dash-topbar">
+          <div className="dash-topbar-left">
+            <div className="dash-topbar-title">Buenos días, {userName} ☀️</div>
+            <div className="dash-topbar-sub">{todayStr}</div>
           </div>
-        </div>
-      </header>
-
-      <div className="app-body">
-        {/* SIDEBAR */}
-        <aside className="sidebar">
-          <div className="sidebar-section">
-            <p className="sidebar-label">Menú</p>
-            <NavLink icon={<Home size={18}/>} label="Home" active />
-            <NavLink icon={<Dumbbell size={18}/>} label="Ejercicios" />
-            <NavLink icon={<Calendar size={18}/>} label="Citas" />
-            <NavLink icon={<BarChart3 size={18}/>} label="Progreso" />
+          <div className="dash-topbar-actions">
+            <button className="dash-t-btn">Configuración</button>
+            <button className="dash-t-btn" style={{ position: 'relative' }}>
+              Notificaciones
+              <span className="dash-notif-dot" />
+            </button>
+            <button className="dash-t-btn primary">▶ Comenzar rutina</button>
           </div>
-        </aside>
-
-        {/* MAIN CONTENT */}
-        <main className="main-content">
-          <div className="page-header">
-            <h1 style={{ color: 'var(--blue-dark)', fontWeight: 900 }}>¡Hola, {userName}! 👋</h1>
-            <p style={{ color: 'var(--text-light)', fontSize: '0.9rem' }}>Martes, 7 de abril de 2026</p>
-          </div>
-
-          <div className="stat-strip">
-            <div className="stat-tile accent">
-              <span className="st-label">Progreso Total</span>
-              <span className="st-value">68%</span>
-              <span className="st-sub">Fase 2: Fortalecimiento</span>
+          <div className="dash-sidebar-user">
+            <div className="dash-s-avatar">{userName[0]}</div>
+            <div>
+              <div className="dash-s-name">{userName}</div>
+              <div className="dash-s-role">Paciente</div>
             </div>
           </div>
+        </header>
 
-          <div className="two-col" style={{ marginTop: '20px' }}>
-            <div className="card">
-              <h3 className="card-title" style={{ marginBottom: '20px' }}>Fases del Tratamiento</h3>
-              <PhaseItem name="Fase 1 · Inflamación" progress={100} status="✓ Completada" color="--lime" />
-              <div style={{ height: '15px' }}></div>
-              <PhaseItem name="Fase 2 · Fortalecimiento" progress={68} status="En curso" color="--blue" />
-              <div style={{ height: '15px' }}></div>
-              <PhaseItem name="Fase 3 · Funcional" progress={0} status="Pendiente" color="--gray-light" muted />
-            </div>
-          </div>
-        </main>
+        {/* CONTENT */}
+        <div className="dash-content">
+          {activeSection === 'home'     && <SectionHome />}
+          {activeSection === 'rutina'   && <SectionRutina />}
+          {activeSection === 'citas'    && <SectionCitas />}
+          {activeSection === 'progreso' && <SectionProgreso />}
+        </div>
       </div>
     </div>
-  );
+  )
+}
+
+/* ══════════════════════════════════════════════
+   SECCIÓN: HOME
+══════════════════════════════════════════════ */
+function SectionHome() {
+  const weekDays = [
+    { d: 'Dom', p: '95%',  s: 'done'  },
+    { d: 'Lun', p: '100%', s: 'done'  },
+    { d: 'Mar', p: '100%', s: 'done'  },
+    { d: 'Mié', p: '87%',  s: 'done'  },
+    { d: 'Jue', p: 'Hoy',  s: 'today' },
+    { d: 'Vie', p: '—',    s: ''      },
+    { d: 'Sáb', p: '—',    s: ''      },
+  ]
+
+  return (
+    <div className="dash-home-grid">
+
+      {/* LEFT COLUMN */}
+      <div>
+        {/* HERO */}
+        <div className="dash-hero">
+          <div>
+            <div className="dash-hero-label">Objetivo de hoy</div>
+            <h2>Rutina de movilidad<br />de hombro</h2>
+            <p>Sesión de 20 min · Enfocada en rango de movimiento</p>
+            <button className="dash-btn-start">▶ Comenzar sesión</button>
+          </div>
+          <div className="dash-hero-emoji">🧘‍♂️</div>
+        </div>
+
+        {/* SEMANA */}
+        <div className="dash-card">
+          <div className="dash-card-title">Resumen de la semana</div>
+          <div className="dash-week-grid">
+            {weekDays.map((item, i) => (
+              <div key={i} className={`dash-wc ${item.s}`}>
+                <span className="dash-wc-day">{item.d}</span>
+                <span className="dash-wc-pct">{item.p}</span>
+                <div className="dash-wc-dot" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* STATS */}
+        <div className="dash-stats-strip">
+          <div className="dash-stat-tile">
+            <span className="dash-st-label">Racha actual</span>
+            <span className="dash-st-value">12</span>
+            <span className="dash-st-sub">Días consecutivos</span>
+          </div>
+          <div className="dash-stat-tile accent">
+            <span className="dash-st-label">Progreso total</span>
+            <span className="dash-st-value">68%</span>
+            <div className="dash-st-bar">
+              <div className="dash-st-bar-fill" style={{ width: '68%' }} />
+            </div>
+            <span className="dash-st-sub">Semana 6 / 12</span>
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT COLUMN */}
+      <div>
+        {/* NOTA FISIO */}
+        <div className="dash-note-card">
+          <div className="dash-nc-header">
+            <div className="dash-nc-ava">👨‍⚕️</div>
+            <div>
+              <div className="dash-nc-name">Dr. Sebastián Rosales</div>
+              <div className="dash-nc-role">Fisioterapeuta · UNAM</div>
+            </div>
+          </div>
+          <p className="dash-nc-body">
+            Juan, recuerda realizar las elevaciones laterales de forma lenta y controlada.
+            Si sientes un pinchazo agudo, reduce el ángulo a 80°. Nos vemos el viernes.
+          </p>
+          <span className="dash-tag-more">Ver más notas →</span>
+        </div>
+
+        {/* CITA */}
+        <div className="dash-appt-card">
+          <div className="dash-card-title">Próxima cita</div>
+          <div className="dash-appt-row">
+            <div className="dash-adb">
+              <span className="dash-adb-day">27</span>
+              <span className="dash-adb-mon">FEB</span>
+            </div>
+            <div>
+              <div className="dash-ai-title">Sesión presencial</div>
+              <div className="dash-ai-sub">Viernes · 16:00 hrs · Clínica Central</div>
+            </div>
+            <span className="dash-badge prox" style={{ marginLeft: 'auto' }}>Próxima</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ══════════════════════════════════════════════
+   SECCIÓN: RUTINA
+══════════════════════════════════════════════ */
+function SectionRutina() {
+  const hoy = [
+    { icon: '🙆', title: 'Movilidad de Hombro',      sub: '3 series · 15 reps · 20 min', badge: 'pending', label: 'Pendiente' },
+    { icon: '💪', title: 'Elevaciones Laterales',     sub: '3 series · 12 reps · Lento',  badge: 'pending', label: 'Pendiente' },
+    { icon: '🧘', title: 'Estiramiento Final',        sub: '1 serie · 2 min · Hold',      badge: 'new',     label: 'Nuevo'     },
+  ]
+  const ayer = [
+    { icon: '🔄', title: 'Rotación Interna',          sub: '4 series · 10 reps', badge: 'done', label: '✓ Hecho' },
+    { icon: '🏋️', title: 'Fortalecimiento Manguito', sub: '3 series · 15 reps', badge: 'done', label: '✓ Hecho' },
+  ]
+
+  return (
+    <>
+      <div className="dash-page-header">
+        <div className="dash-page-title">Mi Rutina</div>
+        <div className="dash-page-sub">Semana 6 de 12 · Plan de Rehabilitación de Hombro</div>
+      </div>
+
+      <div className="dash-sec-label">Hoy — Jueves 26</div>
+      <div className="dash-routine-list">
+        {hoy.map((r, i) => (
+          <div key={i} className="dash-ri">
+            <div className="dash-ri-icon">{r.icon}</div>
+            <div>
+              <div className="dash-ri-title">{r.title}</div>
+              <div className="dash-ri-sub">{r.sub}</div>
+            </div>
+            <span className={`dash-ri-badge ${r.badge}`}>{r.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="dash-sec-label">Ayer — Completado</div>
+      <div className="dash-routine-list">
+        {ayer.map((r, i) => (
+          <div key={i} className="dash-ri">
+            <div className="dash-ri-icon">{r.icon}</div>
+            <div>
+              <div className="dash-ri-title">{r.title}</div>
+              <div className="dash-ri-sub">{r.sub}</div>
+            </div>
+            <span className={`dash-ri-badge ${r.badge}`}>{r.label}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════
+   SECCIÓN: CITAS
+══════════════════════════════════════════════ */
+function SectionCitas() {
+  const proximas = [
+    {
+      fecha: 'Viernes, 27 de Febrero',
+      hora: '16:00',
+      tipo: 'Sesión Presencial',
+      lugar: 'Clínica Central · Dr. Rosales',
+      badgeClass: 'prox',
+      badgeLabel: 'Próxima',
+    },
+    {
+      fecha: 'Miércoles, 5 de Marzo',
+      hora: '11:30',
+      tipo: 'Evaluación de Progreso',
+      lugar: 'Módulo 3 · Dr. Rosales',
+      badgeClass: 'agendada',
+      badgeLabel: 'Agendada',
+    },
+  ]
+
+  return (
+    <>
+      <div className="dash-page-header">
+        <div className="dash-page-title">Mis Citas</div>
+        <div className="dash-page-sub">Historial y próximas sesiones</div>
+      </div>
+
+      <div className="dash-sec-label">Próximas</div>
+      <div className="dash-cita-grid">
+        {proximas.map((c, i) => (
+          <div key={i} className="dash-cita-card">
+            <div className="dash-cita-head">
+              <span className="dash-cita-fecha">{c.fecha}</span>
+              <span className={`dash-badge ${c.badgeClass}`}>{c.badgeLabel}</span>
+            </div>
+            <div className="dash-cita-body">
+              <div className="dash-cita-time">
+                <div className="dash-ct-hour">{c.hora}</div>
+                <div className="dash-ct-period">HRS</div>
+              </div>
+              <div>
+                <div className="dash-ci-title">{c.tipo}</div>
+                <div className="dash-ci-place">📍 {c.lugar}</div>
+              </div>
+            </div>
+            <button className="dash-btn-sm">Ver detalles completos</button>
+          </div>
+        ))}
+      </div>
+
+      <div className="dash-sec-label">Historial</div>
+      <div style={{ opacity: 0.75 }}>
+        <div className="dash-cita-card" style={{ maxWidth: 460 }}>
+          <div className="dash-cita-head">
+            <span className="dash-cita-fecha">Miércoles, 19 de Febrero</span>
+            <span className="dash-badge pasada">Completada</span>
+          </div>
+          <div className="dash-cita-body">
+            <div className="dash-cita-time">
+              <div className="dash-ct-hour">10:00</div>
+              <div className="dash-ct-period">HRS</div>
+            </div>
+            <div>
+              <div className="dash-ci-title">Sesión de Seguimiento</div>
+              <div className="dash-ci-place">📍 Clínica Central · Dr. Rosales</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════
+   SECCIÓN: PROGRESO
+══════════════════════════════════════════════ */
+function SectionProgreso() {
+  const indicadores = [
+    { nombre: 'Rango de movimiento', valor: 82, tipo: 'blue' },
+    { nombre: 'Fuerza muscular',     valor: 61, tipo: 'blue' },
+    { nombre: 'Control del dolor',   valor: 90, tipo: 'lime' },
+    { nombre: 'Adherencia semanal',  valor: 95, tipo: 'lime' },
+  ]
+
+  return (
+    <>
+      <div className="dash-page-header">
+        <div className="dash-page-title">Mi Progreso</div>
+        <div className="dash-page-sub">Rehabilitación de Hombro · Semana 6 / 12</div>
+      </div>
+
+      <div className="dash-prog-layout">
+        {/* HERO CIRCLE */}
+        <div className="dash-prog-hero">
+          <div className="dash-ph-label">Progreso global</div>
+          <div className="dash-ph-circle">
+            <div className="dash-ph-pct">68%</div>
+            <div className="dash-ph-sub">completado</div>
+          </div>
+          <p className="dash-ph-desc">
+            ¡Vas muy bien! Mantén la racha de{' '}
+            <strong>12 días</strong> consecutivos para acelerar tu recuperación.
+          </p>
+        </div>
+
+        {/* INDICATORS */}
+        <div>
+          <div className="dash-card">
+            <div className="dash-card-title">Indicadores de recuperación</div>
+            <div className="dash-prog-bars">
+              {indicadores.map((ind, i) => (
+                <div key={i}>
+                  <div className="dash-pb-header">
+                    <span className="dash-pb-name">{ind.nombre}</span>
+                    <span className={`dash-pb-val ${ind.tipo}`}>{ind.valor}%</span>
+                  </div>
+                  <div className="dash-pb-track">
+                    <div
+                      className={`dash-pb-fill ${ind.tipo}`}
+                      style={{ width: `${ind.valor}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="dash-prog-stats">
+            <div className="dash-stat-tile">
+              <span className="dash-st-label">Sesiones</span>
+              <span className="dash-st-value">28</span>
+              <span className="dash-st-sub">Completadas</span>
+            </div>
+            <div className="dash-stat-tile">
+              <span className="dash-st-label">Racha máxima</span>
+              <span className="dash-st-value">12</span>
+              <span className="dash-st-sub">Días seguidos 🏅</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
 }
