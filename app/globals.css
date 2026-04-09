@@ -588,7 +588,7 @@ html, body {
 }
 
 .dash-logo { z-index: 1; text-align: center; margin-bottom: 10px;}
-.dash-logo img { width: 150px; height: auto; filter: drop-shadow(0 0 15px rgba(35, 189, 109, 0.4)); transition: transform 0.3s ease;}
+.dash-logo img { width: 150px; height: auto; filter: drop-shadow(0 0 15px rgba(22, 76, 48, 0.4)); transition: transform 0.3s ease;}
 .dash-logo img:hover {transform: scale(1.05);}
 
 /* ── ROOT LAYOUT ── */
@@ -753,8 +753,8 @@ html, body {
 }
 
 .dash-topbar-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 25px;
+  font-weight: 800;
   color: var(--text);
 }
 
@@ -766,7 +766,7 @@ html, body {
 .dash-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
 .dash-t-btn {

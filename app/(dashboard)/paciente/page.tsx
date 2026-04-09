@@ -49,12 +49,9 @@ export default function PacientePage() {
                 className="mx-auto"
                 priority
               />
-                                  </div>
+          </div>
           <div className="dash-brand-tag">Plataforma de rehabilitación</div>
         </div>
-
-        
-
         <nav className="dash-sidebar-nav">
           {navItems.map(({ key, icon, label }) => (
             <button
@@ -84,14 +81,12 @@ export default function PacientePage() {
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
           <div className="dash-topbar-actions">
-            <button className="dash-t-btn">Configuración</button>
+            <button className="dash-t-btn">⚙️ Configuración</button>
             <button className="dash-t-btn" style={{ position: 'relative' }}>
-              Notificaciones
+              🔔 Notificaciones
               <span className="dash-notif-dot" />
             </button>
-            <button className="dash-t-btn primary">▶ Comenzar rutina</button>
-          </div>
-          <div className="dash-sidebar-user">
+            <button className="dash-t-btn primary">💬 Bandeja de entrada</button>
             <div className="dash-s-avatar">{userName[0]}</div>
             <div>
               <div className="dash-s-name">{userName}</div>
