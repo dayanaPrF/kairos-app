@@ -87,7 +87,7 @@ export default function PacientePage() {
               <span className="dash-notif-dot" />
             </button>
             <button className="dash-t-btn primary">💬 Bandeja de entrada</button>
-            <div className="dash-s-avatar">{userName[0]}</div>
+            <button className="dash-s-avatar">{userName[0]}</button>
             <div>
               <div className="dash-s-name">{userName}</div>
               <div className="dash-s-role">Paciente</div>

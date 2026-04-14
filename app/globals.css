@@ -639,6 +639,7 @@ html, body {
 }
 
 .dash-s-avatar {
+  /* Tus estilos originales */
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -650,6 +651,15 @@ html, body {
   font-size: 14px;
   font-weight: 700;
   flex-shrink: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  outline: none;
+}
+
+.dash-s-avatar:active {
+  transform: scale(0.95);
+  opacity: 0.9;
 }
 
 .dash-s-name {
@@ -978,7 +988,7 @@ html, body {
   align-items: center;
   gap: 6px;
   background: var(--lime);
-  color: var(--lime-dark);
+  color: var(--bg);
   border: none;
   border-radius: 8px;
   padding: 9px 16px;
@@ -1498,4 +1508,54 @@ html, body {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-top: 16px;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  background: white;
+  padding: 30px;
+  border-radius: 20px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.profile-form .form-group {
+  margin-bottom: 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-form input, .profile-form textarea {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  margin-top: 5px;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
 }
