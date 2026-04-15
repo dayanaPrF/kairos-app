@@ -1715,6 +1715,19 @@ html, body {
   color: var(--blue);
 }
 
+.fl-dir {
+  font-size: .65rem;
+  font-weight: 600;
+  color: var(--text-light);
+  text-transform: uppercase;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.fl-dir span {
+  color: var(--blue);
+}
+
 /* Botones y acciones */
 .actions {
   display: flex;
@@ -1724,19 +1737,20 @@ html, body {
 }
 
 .btn-regresar {
-  flex: 1;
-  height: 30px;
-  width: 150px;
-  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  padding: 8px 16px;
   border-radius: 8px;
-  color:var(--green-light);
-  background: linear-gradient(135deg, var(--green-dark), var(--green));
-  font-size: .80rem;
-  font-weight: 1500;
-  font-family: 'Nunito', sans-serif;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(26, 63, 82, .22);
-  transition: .2s;
+  font-size: 0.8rem;
+  transition: 0.3s;
+  z-index: 2;
+  margin-bottom: 20px;
+}
+
+.btn-regresar:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .btn-save {
@@ -1814,4 +1828,11 @@ html, body {
   font-weight: 600;
   color: #fff;
   margin-top: 1px;
+}
+
+.p-grid-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* Dos columnas */
+  gap: 16px;
+  width: 100%;
 }
