@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import Image from 'next/image'; 
+import Link from 'next/link';
 
 type Section = 'home' | 'rutina' | 'citas' | 'progreso'
 
@@ -87,7 +88,12 @@ export default function PacientePage() {
               <span className="dash-notif-dot" />
             </button>
             <button className="dash-t-btn primary">💬 Bandeja de entrada</button>
-            <button className="dash-s-avatar">{userName[0]}</button>
+            <Link href="paciente/perfil" className="dash-avatar-link">
+              <button className="dash-s-avatar">
+                {userName[0]}
+              </button>
+            </Link>
+            {/*<button className="dash-s-avatar">{userName[0]}</button>*/}
             <div>
               <div className="dash-s-name">{userName}</div>
               <div className="dash-s-role">Paciente</div>
