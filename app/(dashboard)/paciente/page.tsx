@@ -217,13 +217,44 @@ function SectionHome() {
    SECCIÓN: RUTINA
 ══════════════════════════════════════════════ */
 function SectionRutina() {
+  // Estado para el ejercicio seleccionado
+  const [selectedExercise, setSelectedExercise] = useState<any>(null);
+
   const hoy = [
-    { icon: '🙆', title: 'Movilidad de Hombro',      sub: '3 series · 15 reps · 20 min', badge: 'pending', label: 'Pendiente' },
-    { icon: '💪', title: 'Elevaciones Laterales',     sub: '3 series · 12 reps · Lento',  badge: 'pending', label: 'Pendiente' },
-    { icon: '🧘', title: 'Estiramiento Final',        sub: '1 serie · 2 min · Hold',      badge: 'new',     label: 'Nuevo'     },
+    { 
+      id: 'movilidad-1',
+      icon: '🙆', 
+      title: 'Movilidad de Hombro', 
+      sub: '3 series · 15 reps · 20 min', 
+      badge: 'pending', 
+      label: 'Pendiente',
+      doctorNotes: 'Mantén la espalda recta. Eleva el brazo lentamente hasta sentir una ligera tensión, no dolor.',
+      doctorTip: 'Si sientes pinchazo, reduce el ángulo.'
+    },
+    { 
+      id: 'elevacion-2',
+      icon: '💪', 
+      title: 'Elevaciones Laterales', 
+      sub: '3 series · 12 reps · Lento', 
+      badge: 'pending', 
+      label: 'Pendiente',
+      doctorNotes: 'Usa una resistencia mínima. El movimiento debe ser lateral puro, sin encoger los hombros.',
+      doctorTip: 'Controla el descenso, no dejes caer el brazo.'
+    },
+    { 
+      id: 'estiramiento-3',
+      icon: '🧘', 
+      title: 'Estiramiento Final', 
+      sub: '1 serie · 2 min · Hold', 
+      badge: 'new', 
+      label: 'Nuevo',
+      doctorNotes: 'Relaja la respiración. Cruza el brazo por delante del pecho y presiona suavemente.',
+      doctorTip: 'Mantén la posición 30 segundos por lado.'
+    },
   ]
+
   const ayer = [
-    { icon: '🔄', title: 'Rotación Interna',          sub: '4 series · 10 reps', badge: 'done', label: '✓ Hecho' },
+    { icon: '🔄', title: 'Rotación Interna', sub: '4 series · 10 reps', badge: 'done', label: '✓ Hecho' },
     { icon: '🏋️', title: 'Fortalecimiento Manguito', sub: '3 series · 15 reps', badge: 'done', label: '✓ Hecho' },
   ]
 
@@ -237,9 +268,14 @@ function SectionRutina() {
       <div className="dash-sec-label">Hoy — Jueves 26</div>
       <div className="dash-routine-list">
         {hoy.map((r, i) => (
-          <div key={i} className="dash-ri">
+          <div 
+            key={i} 
+            className="dash-ri" 
+            style={{ cursor: 'pointer' }} 
+            onClick={() => setSelectedExercise(r)}
+          >
             <div className="dash-ri-icon">{r.icon}</div>
-            <div>
+            <div style={{ flex: 1 }}>
               <div className="dash-ri-title">{r.title}</div>
               <div className="dash-ri-sub">{r.sub}</div>
             </div>
@@ -261,6 +297,49 @@ function SectionRutina() {
           </div>
         ))}
       </div>
+
+      {/* ── MODAL DE INDICACIONES ── */}
+      {selectedExercise && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <div className="modal-icon-badge">{selectedExercise.icon}</div>
+              <div style={{ flex: 1 }}>
+                <h3 className="modal-title">{selectedExercise.title}</h3>
+                <p className="modal-subtitle">{selectedExercise.sub}</p>
+              </div>
+              <button className="modal-close" onClick={() => setSelectedExercise(null)}>✕</button>
+            </div>
+
+            <div className="modal-body">
+              <div className="doc-note-box">
+                <div className="doc-note-header">
+                  <span>👨‍⚕️ Nota del Fisioterapeuta</span>
+                </div>
+                <p className="doc-note-text">{selectedExercise.doctorNotes}</p>
+                <div className="doc-tip">
+                  <strong>Tip:</strong> {selectedExercise.doctorTip}
+                </div>
+              </div>
+
+              <div className="exercise-preview-mock">
+                <div className="play-circle">▶</div>
+                <span>Vista previa del ejercicio</span>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-modal-back" onClick={() => setSelectedExercise(null)}>Regresar</button>
+              <Link 
+                href={`/paciente/rehabilitacion?ex=${selectedExercise.id}`} 
+                className="btn-modal-start"
+              >
+                Comenzar sesión →
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
