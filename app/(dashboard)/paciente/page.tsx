@@ -136,8 +136,8 @@ function SectionHome() {
         <div className="dash-hero">
           <div>
             <div className="dash-hero-label">Objetivo de hoy</div>
-            <h2>Rutina de movilidad<br />de hombro</h2>
-            <p>Sesión de 20 min · Enfocada en rango de movimiento</p>
+            <h2>Rutina de Fortalecimient de<br />hombros y brazos</h2>
+            <p>Sesión de 40 min aprox· Enfocada en rango de movimiento</p>
             <button className="dash-btn-start">▶ Comenzar sesión</button>
           </div>
           <div className="dash-hero-emoji">🧘‍♂️</div>
@@ -217,59 +217,90 @@ function SectionHome() {
    SECCIÓN: RUTINA
 ══════════════════════════════════════════════ */
 function SectionRutina() {
-  // Estado para el ejercicio seleccionado
   const [selectedExercise, setSelectedExercise] = useState<any>(null);
+  const [hoy, setHoy] = useState<any[]>([]);
+  const [ayer, setAyer] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const hoy = [
-    { 
-      id: 'movilidad-1',
-      icon: '🙆', 
-      title: 'Movilidad de Hombro', 
-      sub: '3 series · 15 reps · 20 min', 
-      badge: 'pending', 
-      label: 'Pendiente',
-      doctorNotes: 'Mantén la espalda recta. Eleva el brazo lentamente hasta sentir una ligera tensión, no dolor.',
-      doctorTip: 'Si sientes pinchazo, reduce el ángulo.'
-    },
-    { 
-      id: 'elevacion-2',
-      icon: '💪', 
-      title: 'Elevaciones Laterales', 
-      sub: '3 series · 12 reps · Lento', 
-      badge: 'pending', 
-      label: 'Pendiente',
-      doctorNotes: 'Usa una resistencia mínima. El movimiento debe ser lateral puro, sin encoger los hombros.',
-      doctorTip: 'Controla el descenso, no dejes caer el brazo.'
-    },
-    { 
-      id: 'estiramiento-3',
-      icon: '🧘', 
-      title: 'Estiramiento Final', 
-      sub: '1 serie · 2 min · Hold', 
-      badge: 'new', 
-      label: 'Nuevo',
-      doctorNotes: 'Relaja la respiración. Cruza el brazo por delante del pecho y presiona suavemente.',
-      doctorTip: 'Mantén la posición 30 segundos por lado.'
-    },
-  ]
+  useEffect(() => {
+    const fetchRutina = async () => {
+      try {
+        setLoading(true);
+        // Obtenemos el usuario actual
+        const { data: { user } } = await supabase.auth.getUser();
 
-  const ayer = [
-    { icon: '🔄', title: 'Rotación Interna', sub: '4 series · 10 reps', badge: 'done', label: '✓ Hecho' },
-    { icon: '🏋️', title: 'Fortalecimiento Manguito', sub: '3 series · 15 reps', badge: 'done', label: '✓ Hecho' },
-  ]
+        if (user) {
+          // 1. Consultamos los ejercicios de la rutina activa del paciente
+          // Nota: Hacemos un join con la tabla 'fase' para traer las notas del médico
+          const { data, error } = await supabase
+            .from('ejercicio')
+            .select(`
+              id_ejercicio,
+              nombre_ejercicio,
+              descripcion,
+              repeticiones,
+              orden,
+              fase (
+                nombre_fase,
+                indicaciones_medico,
+                duracion_fase
+              )
+            `)
+            // Aquí idealmente filtrarías por la fase actual del paciente
+            // .eq('id_fase', idFaseActual) 
+
+          if (data) {
+            //Mapeamos los datos del SQL al formato de tu interfaz
+            const ejerciciosFormateados = data.map((ex: any) => ({
+              id: ex.id_ejercicio,
+              icon: ex.nombre_ejercicio.toLowerCase().includes('hombro') ? '🙆' : '💪',
+              title: ex.nombre_ejercicio,
+              sub: `${ex.repeticiones} reps · ${ex.fase?.duracion_fase || 15} min`,
+              badge: 'pending',
+              label: 'Pendiente',
+              doctorNotes: ex.fase?.indicaciones_medico || 'Sigue las instrucciones del video.',
+              doctorTip: ex.descripcion, // Usamos la descripción del ejercicio como el Tip
+              rutinaNombre: ex.fase?.nombre_fase
+            }));
+
+            setHoy(ejerciciosFormateados);
+          }
+        }
+      } catch (err) {
+        console.error("Error cargando rutina:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRutina();
+
+    // Datos estáticos para "Ayer" (puedes dejarlos así o crear otra tabla de historial)
+    setAyer([
+      { icon: '🔄', title: 'Rotación Interna', sub: '4 series · 10 reps', badge: 'done', label: '✓ Hecho' },
+      { icon: '🏋️', title: 'Fortalecimiento Manguito', sub: '3 series · 15 reps', badge: 'done', label: '✓ Hecho' },
+    ]);
+  }, []);
+
+  if (loading) return <div className="dash-loading">Cargando tu rutina...</div>;
 
   return (
     <>
       <div className="dash-page-header">
         <div className="dash-page-title">Mi Rutina</div>
-        <div className="dash-page-sub">Semana 6 de 12 · Plan de Rehabilitación de Hombro</div>
+        <div className="dash-page-sub">Plan Personalizado de Rehabilitación</div>
       </div>
 
-      <div className="dash-sec-label">Hoy — Jueves 26</div>
+      {/* Título de la Fase/Rutina dinámico desde la tabla Fase */}
+      <div className='dash-sec-label-rutine'>
+        Rutina: {hoy[0]?.rutinaNombre || 'Fortalecimiento'}
+      </div>
+      
+      <div className="dash-sec-label">Hoy — Ejercicios sugeridos</div>
       <div className="dash-routine-list">
         {hoy.map((r, i) => (
           <div 
-            key={i} 
+            key={r.id} 
             className="dash-ri" 
             style={{ cursor: 'pointer' }} 
             onClick={() => setSelectedExercise(r)}
@@ -289,7 +320,7 @@ function SectionRutina() {
         {ayer.map((r, i) => (
           <div key={i} className="dash-ri">
             <div className="dash-ri-icon">{r.icon}</div>
-            <div>
+            <div style={{ flex: 1 }}>
               <div className="dash-ri-title">{r.title}</div>
               <div className="dash-ri-sub">{r.sub}</div>
             </div>
@@ -341,7 +372,7 @@ function SectionRutina() {
         </div>
       )}
     </>
-  )
+  );
 }
 
 /* ══════════════════════════════════════════════

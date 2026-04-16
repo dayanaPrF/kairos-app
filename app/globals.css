@@ -885,6 +885,15 @@ html, body {
   margin-bottom: 8px;
 }
 
+.dash-sec-label-rutine {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-mid);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 8px;
+}
+
 /* BADGE */
 .dash-badge {
   font-size: 11px;
