@@ -103,7 +103,9 @@ export default function PacientePage() {
 
         {/* CONTENT */}
         <div className="dash-content">
-          {activeSection === 'home'     && <SectionHome />}
+          {activeSection === 'home' && (
+            <SectionHome onStart={() => setActiveSection('rutina')} />
+          )}
           {activeSection === 'rutina'   && <SectionRutina />}
           {activeSection === 'citas'    && <SectionCitas />}
           {activeSection === 'progreso' && <SectionProgreso />}
@@ -116,7 +118,7 @@ export default function PacientePage() {
 /* ══════════════════════════════════════════════
    SECCIÓN: HOME
 ══════════════════════════════════════════════ */
-function SectionHome() {
+function SectionHome({ onStart }: { onStart: () => void }) {
   const weekDays = [
     { d: 'Dom', p: '95%',  s: 'done'  },
     { d: 'Lun', p: '100%', s: 'done'  },
@@ -126,7 +128,7 @@ function SectionHome() {
     { d: 'Vie', p: '—',    s: ''      },
     { d: 'Sáb', p: '—',    s: ''      },
   ]
-
+  
   return (
     <div className="dash-home-grid">
 
@@ -138,7 +140,10 @@ function SectionHome() {
             <div className="dash-hero-label">Objetivo de hoy</div>
             <h2>Rutina de Fortalecimient de<br />hombros y brazos</h2>
             <p>Sesión de 40 min aprox· Enfocada en rango de movimiento</p>
-            <button className="dash-btn-start">▶ Comenzar sesión</button>
+            {/*<button className="dash-btn-start">▶ Comenzar sesión</button>*/}
+            <button className="dash-btn-start" onClick={onStart}>
+              ▶ Comenzar sesión
+            </button>
           </div>
           <div className="dash-hero-emoji">🧘‍♂️</div>
         </div>
@@ -214,130 +219,65 @@ function SectionHome() {
 }
 
 /* ══════════════════════════════════════════════
-   SECCIÓN: RUTINA
+   SECCIÓN: RUTINA (Integrando PoseSelector)
 ══════════════════════════════════════════════ */
 function SectionRutina() {
   const [selectedExercise, setSelectedExercise] = useState<any>(null);
-  const [hoy, setHoy] = useState<any[]>([]);
-  const [ayer, setAyer] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchRutina = async () => {
-      try {
-        setLoading(true);
-        // Obtenemos el usuario actual
-        const { data: { user } } = await supabase.auth.getUser();
-
-        if (user) {
-          // 1. Consultamos los ejercicios de la rutina activa del paciente
-          // Nota: Hacemos un join con la tabla 'fase' para traer las notas del médico
-          const { data, error } = await supabase
-            .from('ejercicio')
-            .select(`
-              id_ejercicio,
-              nombre_ejercicio,
-              descripcion,
-              repeticiones,
-              orden,
-              fase (
-                nombre_fase,
-                indicaciones_medico,
-                duracion_fase
-              )
-            `)
-            // Aquí idealmente filtrarías por la fase actual del paciente
-            // .eq('id_fase', idFaseActual) 
-
-          if (data) {
-            //Mapeamos los datos del SQL al formato de tu interfaz
-            const ejerciciosFormateados = data.map((ex: any) => ({
-              id: ex.id_ejercicio,
-              icon: ex.nombre_ejercicio.toLowerCase().includes('hombro') ? '🙆' : '💪',
-              title: ex.nombre_ejercicio,
-              sub: `${ex.repeticiones} reps · ${ex.fase?.duracion_fase || 15} min`,
-              badge: 'pending',
-              label: 'Pendiente',
-              doctorNotes: ex.fase?.indicaciones_medico || 'Sigue las instrucciones del video.',
-              doctorTip: ex.descripcion, // Usamos la descripción del ejercicio como el Tip
-              rutinaNombre: ex.fase?.nombre_fase
-            }));
-
-            setHoy(ejerciciosFormateados);
-          }
-        }
-      } catch (err) {
-        console.error("Error cargando rutina:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchRutina();
-
-    // Datos estáticos para "Ayer" (puedes dejarlos así o crear otra tabla de historial)
-    setAyer([
-      { icon: '🔄', title: 'Rotación Interna', sub: '4 series · 10 reps', badge: 'done', label: '✓ Hecho' },
-      { icon: '🏋️', title: 'Fortalecimiento Manguito', sub: '3 series · 15 reps', badge: 'done', label: '✓ Hecho' },
-    ]);
-  }, []);
-
-  if (loading) return <div className="dash-loading">Cargando tu rutina...</div>;
+  
+  // Importamos los ejercicios reales que configuraron tus amigos
+  // Asegúrate de que la ruta a ALL_POSES sea correcta según tu estructura
+  const { ALL_POSES } = require("../../lib/poses"); 
 
   return (
     <>
       <div className="dash-page-header">
         <div className="dash-page-title">Mi Rutina</div>
-        <div className="dash-page-sub">Plan Personalizado de Rehabilitación</div>
+        <div className="dash-page-sub">Selecciona un ejercicio de la biblioteca de Kairós</div>
       </div>
 
-      {/* Título de la Fase/Rutina dinámico desde la tabla Fase */}
       <div className='dash-sec-label-rutine'>
-        Rutina: {hoy[0]?.rutinaNombre || 'Fortalecimiento'}
+        Sesiones de hoy: {ALL_POSES.length} ejercicios disponibles
       </div>
       
-      <div className="dash-sec-label">Hoy — Ejercicios sugeridos</div>
+      <div className="dash-sec-label">Biblioteca de Ejercicios IA</div>
+      
       <div className="dash-routine-list">
-        {hoy.map((r, i) => (
+        {ALL_POSES.map((pose: any) => (
           <div 
-            key={r.id} 
+            key={pose.id} 
             className="dash-ri" 
-            style={{ cursor: 'pointer' }} 
-            onClick={() => setSelectedExercise(r)}
+            style={{ 
+              cursor: 'pointer',
+              borderLeft: selectedExercise?.id === pose.id ? '4px solid var(--lime)' : 'none' 
+            }} 
+            onClick={() => setSelectedExercise(pose)}
           >
-            <div className="dash-ri-icon">{r.icon}</div>
-            <div style={{ flex: 1 }}>
-              <div className="dash-ri-title">{r.title}</div>
-              <div className="dash-ri-sub">{r.sub}</div>
+            {/* Usamos el icono que viene en el archivo de tus amigos */}
+            <div className="dash-ri-icon" style={{ fontSize: '1.5rem' }}>
+              {pose.icon || "🧘"}
             </div>
-            <span className={`dash-ri-badge ${r.badge}`}>{r.label}</span>
+            
+            <div style={{ flex: 1 }}>
+              <div className="dash-ri-title">{pose.name}</div>
+              <div className="dash-ri-sub">
+                {pose.keypoints.length} puntos de control monitoreados
+              </div>
+            </div>
+
+            <span className="dash-ri-badge pending">Disponible</span>
           </div>
         ))}
       </div>
 
-      <div className="dash-sec-label">Ayer — Completado</div>
-      <div className="dash-routine-list">
-        {ayer.map((r, i) => (
-          <div key={i} className="dash-ri">
-            <div className="dash-ri-icon">{r.icon}</div>
-            <div style={{ flex: 1 }}>
-              <div className="dash-ri-title">{r.title}</div>
-              <div className="dash-ri-sub">{r.sub}</div>
-            </div>
-            <span className={`dash-ri-badge ${r.badge}`}>{r.label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* ── MODAL DE INDICACIONES ── */}
+      {/* ── MODAL DE LANZAMIENTO ── */}
       {selectedExercise && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <div className="modal-icon-badge">{selectedExercise.icon}</div>
+              <div className="modal-icon-badge">{selectedExercise.icon || "🧘"}</div>
               <div style={{ flex: 1 }}>
-                <h3 className="modal-title">{selectedExercise.title}</h3>
-                <p className="modal-subtitle">{selectedExercise.sub}</p>
+                <h3 className="modal-title">{selectedExercise.name}</h3>
+                <p className="modal-subtitle">IA de Visión Computacional Lista</p>
               </div>
               <button className="modal-close" onClick={() => setSelectedExercise(null)}>✕</button>
             </div>
@@ -345,27 +285,33 @@ function SectionRutina() {
             <div className="modal-body">
               <div className="doc-note-box">
                 <div className="doc-note-header">
-                  <span>👨‍⚕️ Nota del Fisioterapeuta</span>
+                  <span>ℹ️ Descripción del ejercicio</span>
                 </div>
-                <p className="doc-note-text">{selectedExercise.doctorNotes}</p>
-                <div className="doc-tip">
-                  <strong>Tip:</strong> {selectedExercise.doctorTip}
+                <p className="doc-note-text" style={{ marginBottom: '15px' }}>
+                  {selectedExercise.description}
+                </p>
+                <div className="doc-tip" style={{ background: 'var(--blue-xlight)', border: '1px solid var(--blue-light)' }}>
+                  <strong>Configuración:</strong> El sistema validará {selectedExercise.keypoints.length} ángulos en tiempo real con un margen de {selectedExercise.globalMarginDeg}° grados.
                 </div>
               </div>
 
-              <div className="exercise-preview-mock">
-                <div className="play-circle">▶</div>
-                <span>Vista previa del ejercicio</span>
+              <div className="exercise-preview-mock" style={{ background: 'var(--blue-deep)', color: 'var(--lime)' }}>
+                <div className="play-circle" style={{ borderColor: 'var(--lime)', color: 'var(--lime)' }}>📷</div>
+                <span>Se requiere acceso a la cámara</span>
               </div>
             </div>
 
             <div className="modal-footer">
-              <button className="btn-modal-back" onClick={() => setSelectedExercise(null)}>Regresar</button>
+              <button className="btn-modal-back" onClick={() => setSelectedExercise(null)}>
+                Regresar
+              </button>
+              
+              {/* Pasamos el ejercicio seleccionado a la pantalla de la cámara */}
               <Link 
-                href={`/paciente/rehabilitacion?ex=${selectedExercise.id}`} 
+                href={`/paciente/rehabilitacion?id=${selectedExercise.id}`} 
                 className="btn-modal-start"
               >
-                Comenzar sesión →
+                Comenzar ahora →
               </Link>
             </div>
           </div>
@@ -374,7 +320,6 @@ function SectionRutina() {
     </>
   );
 }
-
 /* ══════════════════════════════════════════════
    SECCIÓN: CITAS
 ══════════════════════════════════════════════ */
