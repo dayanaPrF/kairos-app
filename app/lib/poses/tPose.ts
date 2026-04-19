@@ -1,4 +1,4 @@
-import { PoseDefinition } from "../types";
+import { PoseDefinition } from "./types";
 
 export const tPose: PoseDefinition = {
   id: "t-pose",
