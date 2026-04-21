@@ -4,9 +4,9 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
   const weekDays = [
     { d: 'Dom', p: '95%',  s: 'done'  },
     { d: 'Lun', p: '100%', s: 'done'  },
-    { d: 'Mar', p: '100%', s: 'done'  },
-    { d: 'Mié', p: '87%',  s: 'done'  },
-    { d: 'Jue', p: 'Hoy',  s: 'today' },
+    { d: 'Mar', p: 'Hoy',  s: 'today' },
+    { d: 'Mié', p: '—',    s: ''      },
+    { d: 'Jue', p: '—',    s: ''      },
     { d: 'Vie', p: '—',    s: ''      },
     { d: 'Sáb', p: '—',    s: ''      },
   ]

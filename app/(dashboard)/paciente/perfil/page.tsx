@@ -19,17 +19,21 @@ export default function PerfilPage() {
         if (user) {
           setProfile(user)
           
-          // Obtener datos de la tabla 'perfil' y su relación con 'direccion'
-          // Modifica tu select en el useEffect:
-          // Cambia tu select por este:
           const { data: dbProfile } = await supabase
-            .from('perfil')
-            .select(`
-              *, 
-              direccion!perfil_id_direccion_fkey (*)
-            `)
-            .eq('id_perfil', user.id)
-            .single()
+          .from('perfil')
+          .select(`
+            *, 
+            direccion!perfil_id_direccion_fkey (*),
+            paciente (
+              *,
+              contacto_emergencia (
+                *,
+                direccion (*)
+              )
+            )
+          `)
+          .eq('id_perfil', user.id)
+          .single()
 
           if (dbProfile) {
             setDbData(dbProfile)
