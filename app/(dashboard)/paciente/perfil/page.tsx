@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { HTMLInputAutoCompleteAttribute, useEffect, useState } from 'react'
 import { supabase } from '../../../../lib/supabase'
 import Link from 'next/link'
 
@@ -21,12 +21,12 @@ export default function PerfilPage() {
           
           // Obtener datos de la tabla 'perfil' y su relación con 'direccion'
           // Modifica tu select en el useEffect:
+          // Cambia tu select por este:
           const { data: dbProfile } = await supabase
             .from('perfil')
             .select(`
               *, 
-              direccion (*),
-              contacto_emergencia (*, direccion (*))
+              direccion!perfil_id_direccion_fkey (*)
             `)
             .eq('id_perfil', user.id)
             .single()
@@ -83,15 +83,15 @@ export default function PerfilPage() {
       const { data: dirUser, error: errDirUser } = await supabase
         .from('direccion')
         .upsert({
-          id_direccion: dbData?.id_direccion,
+          //id_direccion: dbData?.id_direccion,
           pais: (document.getElementsByName('pais')[0] as HTMLInputElement)?.value || 'México',
           estado: (document.getElementsByName('estado')[0] as HTMLInputElement)?.value,
           municipio: (document.getElementsByName('municipio')[0] as HTMLInputElement)?.value,
           colonia: (document.getElementsByName('colonia')[0] as HTMLInputElement)?.value,
           calle: (document.getElementsByName('calle')[0] as HTMLInputElement)?.value,
-          numero_exterior: (document.getElementsByName('num_ext')[0] as HTMLInputElement)?.value, // SQL: numero_exterior
-          numero_interior: (document.getElementsByName('num_int')[0] as HTMLInputElement)?.value,  // SQL: numero_interior
-          codigo_postal: (document.getElementsByName('cp')[0] as HTMLInputElement)?.value,      // SQL: codigo_postal
+          numero_exterior: (document.getElementsByName('num_ext')[0] as HTMLInputElement)?.value, 
+          numero_interior: (document.getElementsByName('num_int')[0] as HTMLInputElement)?.value,
+          codigo_postal: (document.getElementsByName('cp')[0] as HTMLInputElement)?.value,     // SQL: codigo_postal
         })
         .select().single();
 
@@ -116,7 +116,7 @@ export default function PerfilPage() {
       const { data: dirContacto, error: errDirContacto } = await supabase
         .from('direccion')
         .upsert({
-          id_direccion: dbData?.contacto_emergencia?.id_direccion, 
+          id_direccion: dbData?.paciente?.contacto_emergencia?.id_direccion,
           pais: (document.getElementsByName('c_pais')[0] as HTMLInputElement)?.value || 'México',
           estado: (document.getElementsByName('c_estado')[0] as HTMLInputElement)?.value,
           municipio: (document.getElementsByName('c_municipio')[0] as HTMLInputElement)?.value,
@@ -132,7 +132,7 @@ export default function PerfilPage() {
 
       // --- PASO 4: CONTACTO DE EMERGENCIA ---
       const { error: errContacto } = await supabase.from('contacto_emergencia').upsert({
-        id_contacto_emergencia: dbData?.contacto_emergencia?.id_contacto_emergencia,
+        id_contacto_emergencia: dbData?.paciente?.contacto_emergencia?.id_contacto_emergencia,
         nombre: (document.getElementsByName('nombre_contacto')[0] as HTMLInputElement)?.value || "Contacto",
         primer_apellido: (document.getElementsByName('ap1_contacto')[0] as HTMLInputElement)?.value || "Apellido",
         segundo_apellido: (document.getElementsByName('ap2_contacto')[0] as HTMLInputElement)?.value,
@@ -296,16 +296,16 @@ export default function PerfilPage() {
               <div className="p-grid-inner" style={{marginTop: '12px'}}>
                 <div>
                   <div className="fl-dir">Número exterior</div>
-                  <div className="p-fw"><span className="p-fi">#️⃣</span><input name="num_ext" className="p-input" type="text" placeholder="No. Ext" defaultValue={dbData?.direccion?.num_ext || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">#️⃣</span><input name="num_ext" className="p-input" type="text" placeholder="No. Ext" defaultValue={dbData?.direccion?.numero_exterior || ''}/></div>
                 </div>
                 <div>
                   <div className="fl-dir">Número interior</div>
-                  <div className="p-fw"><span className="p-fi">#️⃣</span><input name="num_int" className="p-input" type="text" placeholder="No. Int" defaultValue={dbData?.direccion?.num_int || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">#️⃣</span><input name="num_int" className="p-input" type="text" placeholder="No. Int" defaultValue={dbData?.direccion?.numero_interior || ''}/></div>
                 </div>
               </div>
 
               <div className="fl-dir">Código postal</div>
-              <div className="p-fw"><span className="p-fi">📮</span><input name='cp' className="p-input" type="text" placeholder="72000" defaultValue={dbData?.direccion?.cp}/></div>
+              <div className="p-fw"><span className="p-fi">📮</span><input name='cp' className="p-input" type="text" placeholder="72000" defaultValue={dbData?.direccion?.codigo_postal}/></div>
             </div>
           </div>
 
@@ -314,31 +314,31 @@ export default function PerfilPage() {
           <div className="p-fields-grid">
             <div className="p-full">
               <div className="fl">Nombre del Contacto</div>
-              <div className="p-fw"><span className="p-fi">👤</span><input name='nombre_contacto' className="p-input" type="text" placeholder="Nombre completo" defaultValue={dbData?.contacto_emergencia?.nombre || ''}/></div>
+              <div className="p-fw"><span className="p-fi">👤</span><input name='nombre_contacto' className="p-input" type="text" placeholder="Nombre completo" defaultValue={dbData?.paciente?.contacto_emergencia?.nombre || ''}/></div>
             </div>
 
             <div className="p-full"> 
               <div className="p-grid-inner" style={{ display: 'flex', gap: '15px', marginTop: '12px' }}>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Primer Apellido</div>
-                  <div className="p-fw"><span className="p-fi">👤</span><input name='ap1_contacto' className="p-input" type="text" placeholder="1er Apellido" defaultValue={dbData?.contacto_emergencia?.ap1_contacto || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">👤</span><input name='ap1_contacto' className="p-input" type="text" placeholder="1er Apellido" defaultValue={dbData?.paciente?.contacto_emergencia?.ap1_contacto || ''}/></div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Segundo Apellido</div>
-                  <div className="p-fw"><span className="p-fi">👤</span><input name='ap2_contacto' className="p-input" type="text" placeholder="2do Apellido" defaultValue={dbData?.contacto_emergencia?.ap2_contacto || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">👤</span><input name='ap2_contacto' className="p-input" type="text" placeholder="2do Apellido" defaultValue={dbData?.paciente?.contacto_emergencia?.ap2_contacto || ''}/></div>
                 </div>
               </div>
 
               <div className="p-grid-inner" style={{ display: 'flex', gap: '15px', marginTop: '12px' }}>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Parentesco</div>
-                  <div className="p-fw"><span className="p-fi">🤝</span><input name='parentesco_contacto' className="p-input" type="text" placeholder="Ej. Padre, Cónyuge" defaultValue={dbData?.contacto_emergencia?.parentesco || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">🤝</span><input name='parentesco_contacto' className="p-input" type="text" placeholder="Ej. Padre, Cónyuge" defaultValue={dbData?.paciente?.contacto_emergencia?.parentesco || ''}/></div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Sexo</div>
                   <div className="p-fw">
                     <span className="p-fi">🚻</span>
-                    <select name='sexo_contacto' className="p-input" style={{ appearance: 'none' }} defaultValue={dbData?.contacto_emergencia?.sexo || 'Seleccionar'}>
+                    <select name='sexo_contacto' className="p-input" style={{ appearance: 'none' }} defaultValue={dbData?.paciente?.contacto_emergencia?.sexo || 'Seleccionar'}>
                       <option>Seleccionar</option><option>Femenino</option><option>Masculino</option><option>Otro</option>
                     </select>
                   </div>
@@ -348,18 +348,18 @@ export default function PerfilPage() {
 
             <div className="p-full" style={{ marginTop: '12px' }}>
               <div className="fl">Correo electrónico</div>
-              <div className="p-fw"><span className="p-fi">✉️</span><input name='email_contacto' className="p-input" type="email" placeholder="correo@ejemplo.com" defaultValue={dbData?.contacto_emergencia?.email || ''}/></div>
+              <div className="p-fw"><span className="p-fi">✉️</span><input name='email_contacto' className="p-input" type="email" placeholder="correo@ejemplo.com" defaultValue={dbData?.paciente?.contacto_emergencia?.email || ''}/></div>
             </div>
 
             <div className="p-full">
               <div className="p-grid-inner" style={{ display: 'flex', gap: '15px', marginTop: '12px' }}>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Teléfono Principal</div>
-                  <div className="p-fw"><span className="p-fi">📞</span><input name='tel1_contacto' className="p-input" type="text" placeholder="55..." defaultValue={dbData?.contacto_emergencia?.telefono_principal || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">📞</span><input name='tel1_contacto' className="p-input" type="text" placeholder="55..." defaultValue={dbData?.paciente?.contacto_emergencia?.telefono_principal || ''}/></div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Segundo Teléfono</div>
-                  <div className="p-fw"><span className="p-fi">📱</span><input name='tel2_contacto' className="p-input" type="text" placeholder="Opcional" defaultValue={dbData?.contacto_emergencia?.telefono_secundario || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">📱</span><input name='tel2_contacto' className="p-input" type="text" placeholder="Opcional" defaultValue={dbData?.paciente?.contacto_emergencia?.telefono_secundario || ''}/></div>
                 </div>
               </div>
               <div className="p-grid-inner" style={{ display: 'flex', gap: '15px', marginTop: '12px' }}>
@@ -367,14 +367,14 @@ export default function PerfilPage() {
                   <div className="fl">Contacto Preferido</div>
                   <div className="p-fw">
                     <span className="p-fi">🔔</span>
-                    <select name='pref_contacto' className="p-input" style={{ appearance: 'none' }} defaultValue={dbData?.contacto_emergencia?.contacto_preferido || 'Llamada'}>
+                    <select name='pref_contacto' className="p-input" style={{ appearance: 'none' }} defaultValue={dbData?.paciente?.contacto_emergencia?.contacto_preferido || 'Llamada'}>
                       <option>Llamada</option><option>WhatsApp</option><option>Mensaje de texto</option>
                     </select>
                   </div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Disponibilidad Horaria</div>
-                  <div className="p-fw"><span className="p-fi">🕒</span><input name='disponibilidad_horaria' className="p-input" type="text" placeholder="Ej. 9:00 - 18:00" defaultValue={dbData?.contacto_emergencia?.disponibilidad_horaria || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">🕒</span><input name='disponibilidad_horaria' className="p-input" type="text" placeholder="Ej. 9:00 - 18:00" defaultValue={dbData?.paciente?.contacto_emergencia?.disponibilidad_horaria || ''}/></div>
                 </div>
               </div>
             </div>
@@ -385,25 +385,25 @@ export default function PerfilPage() {
               <div className="p-grid-inner">
                 <div style={{ flex: 1 }}>
                   <div className="fl-dir">PAÍS</div>
-                  <div className="p-fw"><span className="p-fi">📍</span><input name='c_pais' className="p-input" type="text" placeholder="Ej. México" defaultValue={dbData?.contacto_emergencia?.direccion?.pais || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">📍</span><input name='c_pais' className="p-input" type="text" placeholder="Ej. México" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.pais || ''}/></div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl-dir">ESTADO</div>
-                  <div className="p-fw"><span className="p-fi">📍</span><input name='c_estado' className="p-input" type="text" placeholder="Ej. Puebla" defaultValue={dbData?.contacto_emergencia?.direccion?.estado || ''}/></div>
+                  <div className="p-fw"><span className="p-fi">📍</span><input name='c_estado' className="p-input" type="text" placeholder="Ej. Puebla" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.estado || ''}/></div>
                 </div>
               </div>
               <div className="fl-dir" style={{ marginTop: '12px' }}>MUNICIPIO</div>
-              <div className="p-fw"><span className="p-fi">📍</span><input name='c_municipio' className="p-input" type="text" placeholder="Municipio" defaultValue={dbData?.contacto_emergencia?.direccion?.municipio || ''}/></div>
+              <div className="p-fw"><span className="p-fi">📍</span><input name='c_municipio' className="p-input" type="text" placeholder="Municipio" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.municipio || ''}/></div>
               <div className="fl-dir" style={{ marginTop: '12px' }}>COLONIA</div>
-              <div className="p-fw"><span className="p-fi">📍</span><input name='c_colonia' className="p-input" type="text" placeholder="Colonia" defaultValue={dbData?.contacto_emergencia?.direccion?.colonia || ''}/></div>
+              <div className="p-fw"><span className="p-fi">📍</span><input name='c_colonia' className="p-input" type="text" placeholder="Colonia" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.colonia || ''}/></div>
               <div className="fl-dir" style={{ marginTop: '12px' }}>CALLE</div>
-              <div className="p-fw"><span className="p-fi">🏠</span><input name='c_calle' className="p-input" type="text" placeholder="Av. Siempre Viva 123" defaultValue={dbData?.contacto_emergencia?.direccion?.calle || ''}/></div>
+              <div className="p-fw"><span className="p-fi">🏠</span><input name='c_calle' className="p-input" type="text" placeholder="Av. Siempre Viva 123" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.calle || ''}/></div>
               <div className="p-grid-inner" style={{ marginTop: '12px' }}>
-                <div style={{ flex: 1 }}><div className="fl-dir">NÚMERO EXTERIOR</div><div className="p-fw"><span className="p-fi">#️⃣</span><input name='c_num_ext' className="p-input" type="text" placeholder="No. Ext" defaultValue={dbData?.contacto_emergencia?.direccion?.num_ext || ''}/></div></div>
-                <div style={{ flex: 1 }}><div className="fl-dir">NÚMERO INTERIOR</div><div className="p-fw"><span className="p-fi">#️⃣</span><input name='c_num_int' className="p-input" type="text" placeholder="No. Int" defaultValue={dbData?.contacto_emergencia?.direccion?.num_int || ''}/></div></div>
+                <div style={{ flex: 1 }}><div className="fl-dir">NÚMERO EXTERIOR</div><div className="p-fw"><span className="p-fi">#️⃣</span><input name='c_num_ext' className="p-input" type="text" placeholder="No. Ext" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.numero_exterior || ''}/></div></div>
+                <div style={{ flex: 1 }}><div className="fl-dir">NÚMERO INTERIOR</div><div className="p-fw"><span className="p-fi">#️⃣</span><input name='c_num_int' className="p-input" type="text" placeholder="No. Int" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.numero_interior || ''}/></div></div>
               </div>
               <div className="fl-dir" style={{ marginTop: '12px' }}>CÓDIGO POSTAL</div>
-              <div className="p-fw"><span className="p-fi">📮</span><input name='c_cp' className="p-input" type="text" placeholder="72000" defaultValue={dbData?.contacto_emergencia?.direccion?.cp || ''}/></div>
+              <div className="p-fw"><span className="p-fi">📮</span><input name='c_cp' className="p-input" type="text" placeholder="72000" defaultValue={dbData?.paciente?.contacto_emergencia?.direccion?.codigo_postal || ''}/></div>
             </div>
           </div>
 
