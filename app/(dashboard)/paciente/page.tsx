@@ -18,14 +18,19 @@ export default function PacientePage() {
   const [activeSection, setActiveSection] = useState<Section>('home')
 
   useEffect(() => {
-    const getProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        setUserName(user.user_metadata?.full_name?.split(' ')[0] || 'Paciente')
+      const getProfile = async () => {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          // Google usa full_name, registro manual usa nombre
+          const nombre = 
+            user.user_metadata?.full_name?.split(' ')[0] ||
+            user.user_metadata?.nombre ||
+            'Paciente'
+          setUserName(nombre)
+        }
       }
-    }
-    getProfile()
-  }, [])
+      getProfile()
+    }, [])
 
   const todayStr = new Date().toLocaleDateString('es-MX', {
     weekday: 'long',
