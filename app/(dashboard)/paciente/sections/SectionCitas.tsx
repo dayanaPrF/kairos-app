@@ -11,8 +11,10 @@ type Cita = {
   motivo_cita: string
   estado_cita: string
   notas_cita: string | null
-  fisioterapeuta?: { nombre: string; primer_apellido: string } | null
-  clinica?: { nombre_clinica: string } | null
+  id_fisioterapeuta: string | null
+  id_clinica: string | null
+  fisioterapeutaNombre?: string | null
+  clinicaNombre?: string | null
 }
 
 function formatFecha(fechaStr: string): string {
@@ -29,6 +31,7 @@ function getBadge(estado: string): { label: string; cls: string } {
   switch (estado?.toLowerCase()) {
     case 'programada':
     case 'agendada':
+    case 'pendiente':
       return { label: 'Agendada', cls: 'agendada' }
     case 'confirmada':
       return { label: 'Próxima', cls: 'prox' }
@@ -43,55 +46,85 @@ function getBadge(estado: string): { label: string; cls: string } {
 }
 
 function isPasada(fechaStr: string): boolean {
-  return new Date(fechaStr) < new Date(new Date().toDateString())
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  return new Date(fechaStr + 'T00:00:00') < hoy
 }
 
 export function SectionCitas() {
   const [citas, setCitas] = useState<Cita[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [citaSeleccionada, setCitaSeleccionada] = useState<Cita | null>(null)
 
   useEffect(() => {
     const fetchCitas = async () => {
       setLoading(true)
+      setError(null)
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+        // PASO 1: usuario autenticado
+        const { data: { user }, error: authErr } = await supabase.auth.getUser()
+        if (authErr || !user) { setError('No hay sesión activa.'); return }
+        console.log('[Citas] user.id:', user.id)
 
-        const { data: perfil } = await supabase
-          .from('perfil')
-          .select('paciente(id_paciente)')
-          .eq('id_perfil', user.id)
-          .single()
-
-        const idPaciente = (perfil as any)?.paciente?.id_paciente
-        if (!idPaciente) return
-
-        const { data } = await supabase
-          .from('cita')
-          .select(`
-            *,
-            fisioterapeuta:id_fisioterapeuta (
-              perfil:id_perfil ( nombre, primer_apellido )
-            ),
-            clinica:id_clinica ( nombre_clinica )
-          `)
-          .eq('id_paciente', idPaciente)
-          .is('deleated_at', null)
-          .order('fecha_cita', { ascending: true })
-
-        if (data) {
-          const normalized = data.map((c: any) => ({
-            ...c,
-            fisioterapeuta: c.fisioterapeuta?.perfil ?? null,
-          }))
-          setCitas(normalized)
-        }
-      } catch (err) {
-        console.error('Error cargando citas:', err)
+        // PASO 2: id_perfil == id_paciente (mismo UUID, relación 1:1 por convención)
+        await cargarCitas(user.id)
+      } catch (err: any) {
+        console.error('[Citas] Error inesperado:', err)
+        setError(err?.message ?? 'Error inesperado')
       } finally {
         setLoading(false)
       }
+    }
+
+    const cargarCitas = async (idPaciente: string) => {
+      console.log('[Citas] Cargando citas para idPaciente:', idPaciente)
+
+      const { data: citasRaw, error: citasErr } = await supabase
+        .from('cita')
+        .select('*')
+        .eq('id_paciente', idPaciente)
+        .is('deleted_at', null)
+        .order('fecha_cita', { ascending: true })
+
+      console.log('[Citas] citasRaw:', JSON.stringify(citasRaw))
+      console.log('[Citas] citasErr:', citasErr?.message)
+
+      if (citasErr) { setError(`Error al cargar citas: ${citasErr.message}`); return }
+      if (!citasRaw || citasRaw.length === 0) { setCitas([]); return }
+
+      // Enriquecer con fisioterapeuta y clínica en queries separados
+      const citasEnriquecidas: Cita[] = await Promise.all(
+        citasRaw.map(async (c: any) => {
+          let fisioterapeutaNombre: string | null = null
+          let clinicaNombre: string | null = null
+
+          if (c.id_fisioterapeuta) {
+            const { data: fData } = await supabase
+              .from('fisioterapeuta')
+              .select('cedula_profesional, especialidad')
+              .eq('id_fisioterapeuta', c.id_fisioterapeuta)
+              .single()
+            console.log('[Citas] fisioterapeuta data:', fData)
+            // En tu tabla de prueba, cedula_profesional = "Dr. Alejandro García"
+            fisioterapeutaNombre = fData?.cedula_profesional ?? null
+          }
+
+          if (c.id_clinica) {
+            const { data: clData } = await supabase
+              .from('clinica')
+              .select('nombre_clinica')
+              .eq('id_clinica', c.id_clinica)
+              .single()
+            clinicaNombre = clData?.nombre_clinica ?? null
+          }
+
+          return { ...c, fisioterapeutaNombre, clinicaNombre }
+        })
+      )
+
+      setCitas(citasEnriquecidas)
+      setLoading(false)
     }
 
     fetchCitas()
@@ -105,6 +138,15 @@ export function SectionCitas() {
   )
 
   if (loading) return <div style={{ padding: '40px', color: '#888' }}>Cargando citas…</div>
+
+  if (error) return (
+    <div style={{ padding: '32px', color: '#c0392b', background: '#fdf2f2', borderRadius: '12px', margin: '20px 0' }}>
+      <strong>⚠️ {error}</strong>
+      <div style={{ marginTop: '8px', fontSize: '0.82rem', color: '#888' }}>
+        Revisa la consola del navegador (F12) para ver los logs detallados.
+      </div>
+    </div>
+  )
 
   return (
     <>
@@ -130,7 +172,6 @@ export function SectionCitas() {
                 {getBadge(citaSeleccionada.estado_cita).label}
               </span>
             </div>
-
             <div style={{ display: 'grid', gap: '12px', fontSize: '0.88rem', color: '#444' }}>
               <div><span style={{ color: '#888', marginRight: 8 }}>📅</span><strong>{formatFecha(citaSeleccionada.fecha_cita)}</strong></div>
               <div>
@@ -138,14 +179,11 @@ export function SectionCitas() {
                 <strong>{formatHora(citaSeleccionada.hora_inicio)} – {formatHora(citaSeleccionada.hora_fin)} HRS</strong>
               </div>
               <div><span style={{ color: '#888', marginRight: 8 }}>📋</span>{citaSeleccionada.motivo_cita}</div>
-              {citaSeleccionada.fisioterapeuta && (
-                <div>
-                  <span style={{ color: '#888', marginRight: 8 }}>👨‍⚕️</span>
-                  Dr. {citaSeleccionada.fisioterapeuta.nombre} {citaSeleccionada.fisioterapeuta.primer_apellido}
-                </div>
+              {citaSeleccionada.fisioterapeutaNombre && (
+                <div><span style={{ color: '#888', marginRight: 8 }}>👨‍⚕️</span>{citaSeleccionada.fisioterapeutaNombre}</div>
               )}
-              {citaSeleccionada.clinica && (
-                <div><span style={{ color: '#888', marginRight: 8 }}>📍</span>{citaSeleccionada.clinica.nombre_clinica}</div>
+              {citaSeleccionada.clinicaNombre && (
+                <div><span style={{ color: '#888', marginRight: 8 }}>📍</span>{citaSeleccionada.clinicaNombre}</div>
               )}
               {citaSeleccionada.notas_cita && (
                 <div style={{ marginTop: '8px', background: '#f4f8fb', borderRadius: '8px', padding: '12px' }}>
@@ -154,7 +192,6 @@ export function SectionCitas() {
                 </div>
               )}
             </div>
-
             <button
               onClick={() => setCitaSeleccionada(null)}
               style={{
@@ -169,13 +206,11 @@ export function SectionCitas() {
         </div>
       )}
 
-      {/* ── Header ── */}
       <div className="dash-page-header">
         <div className="dash-page-title">Mis Citas</div>
         <div className="dash-page-sub">Historial y próximas sesiones</div>
       </div>
 
-      {/* ── Próximas ── */}
       <div className="dash-sec-label">Próximas</div>
       {proximas.length === 0 ? (
         <div style={{ color: '#aaa', fontSize: '0.9rem', marginBottom: '24px' }}>
@@ -198,12 +233,12 @@ export function SectionCitas() {
                   </div>
                   <div>
                     <div className="dash-ci-title">{c.motivo_cita}</div>
-                    {c.clinica && (
-                      <div className="dash-ci-place">
-                        📍 {c.clinica.nombre_clinica}
-                        {c.fisioterapeuta && ` · Dr. ${c.fisioterapeuta.nombre} ${c.fisioterapeuta.primer_apellido}`}
-                      </div>
-                    )}
+                    <div className="dash-ci-place">
+                      {c.clinicaNombre ? `📍 ${c.clinicaNombre}` : ''}
+                      {c.fisioterapeutaNombre
+                        ? (c.clinicaNombre ? ` · ${c.fisioterapeutaNombre}` : `👨‍⚕️ ${c.fisioterapeutaNombre}`)
+                        : ''}
+                    </div>
                   </div>
                 </div>
                 <button className="dash-btn-sm" onClick={() => setCitaSeleccionada(c)}>
@@ -215,7 +250,6 @@ export function SectionCitas() {
         </div>
       )}
 
-      {/* ── Historial ── */}
       <div className="dash-sec-label">Historial</div>
       {historial.length === 0 ? (
         <div style={{ color: '#aaa', fontSize: '0.9rem' }}>No hay citas anteriores.</div>
@@ -236,12 +270,12 @@ export function SectionCitas() {
                   </div>
                   <div>
                     <div className="dash-ci-title">{c.motivo_cita}</div>
-                    {c.clinica && (
-                      <div className="dash-ci-place">
-                        📍 {c.clinica.nombre_clinica}
-                        {c.fisioterapeuta && ` · Dr. ${c.fisioterapeuta.nombre} ${c.fisioterapeuta.primer_apellido}`}
-                      </div>
-                    )}
+                    <div className="dash-ci-place">
+                      {c.clinicaNombre ? `📍 ${c.clinicaNombre}` : ''}
+                      {c.fisioterapeutaNombre
+                        ? (c.clinicaNombre ? ` · ${c.fisioterapeutaNombre}` : `👨‍⚕️ ${c.fisioterapeutaNombre}`)
+                        : ''}
+                    </div>
                   </div>
                 </div>
                 <button className="dash-btn-sm" onClick={() => setCitaSeleccionada(c)} style={{ opacity: 0.7 }}>
