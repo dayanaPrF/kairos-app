@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../../../lib/supabase'
 import Link from 'next/link'
+import { DireccionBlock } from '@/app/components/Direccionblock'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 interface DireccionForm {
@@ -31,6 +32,8 @@ interface PerfilForm {
   contacto: ContactoForm
 }
 
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const emptyDir = (): DireccionForm => ({
   pais: '', estado: '', municipio: '', colonia: '',
   calle: '', numero_exterior: '', numero_interior: '', codigo_postal: ''
@@ -56,19 +59,19 @@ const emptyForm = (): PerfilForm => ({
   contacto: emptyContacto()
 })
 
-// ─── Componente ───────────────────────────────────────────────────────────────
+// ─── Componente principal ─────────────────────────────────────────────────────
 export default function PerfilPage() {
-  const [authUser, setAuthUser]   = useState<any>(null)
-  const [dbData, setDbData]       = useState<any>(null)
-  const [form, setForm]           = useState<PerfilForm>(emptyForm())
+  const [authUser, setAuthUser]     = useState<any>(null)
+  const [dbData, setDbData]         = useState<any>(null)
+  const [form, setForm]             = useState<PerfilForm>(emptyForm())
   const [isComplete, setIsComplete] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
   const [newPassword, setNewPassword]   = useState('')
-  const [loading, setLoading]     = useState(true)
-  const [saving, setSaving]       = useState(false)
-  const [mensaje, setMensaje]     = useState<{ tipo: 'exito' | 'error'; texto: string } | null>(null)
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
+  const [mensaje, setMensaje]   = useState<{ tipo: 'exito' | 'error'; texto: string } | null>(null)
 
-  // ── Helpers de actualización de estado anidado ────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
   const setDir = (field: keyof DireccionForm, val: string) =>
     setForm(f => ({ ...f, direccion: { ...f.direccion, [field]: val } }))
 
@@ -78,53 +81,35 @@ export default function PerfilPage() {
   const setCont = (field: keyof Omit<ContactoForm, 'direccion'>, val: string) =>
     setForm(f => ({ ...f, contacto: { ...f.contacto, [field]: val } }))
 
-  // ── Carga inicial ─────────────────────────────────────────────────────────
+  // ── Carga inicial ──────────────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       setLoading(true)
       try {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
-
         setAuthUser(user)
 
-        // ── Consulta 1: perfil + dirección del paciente ──────────────────────
         const { data: perfil, error: ePerfil } = await supabase
-          .from('perfil')
-          .select('*, direccion(*)')
-          .eq('id_perfil', user.id)
-          .maybeSingle()
-
+          .from('perfil').select('*, direccion(*)')
+          .eq('id_perfil', user.id).maybeSingle()
         if (ePerfil) throw ePerfil
 
-        // ── Consulta 2: paciente + contacto_emergencia + su dirección ─────
-        // La FK está en paciente.id_paciente → perfil.id_perfil,
-        // así que partimos desde paciente y hacemos join hacia contacto_emergencia
         const { data: pac, error: ePac } = await supabase
           .from('paciente')
-          .select(`
-            *,
-            contacto_emergencia (
-              *,
-              direccion (*)
-            )
-          `)
-          .eq('id_paciente', user.id)
-          .maybeSingle()
-
+          .select('*, contacto_emergencia(*, direccion(*))')
+          .eq('id_paciente', user.id).maybeSingle()
         if (ePac) throw ePac
 
-        // Combinamos ambos resultados en dbData para referencia futura
         const db = perfil ? { ...perfil, paciente: pac } : null
         setDbData(db)
 
         if (perfil) {
           const ce = pac?.contacto_emergencia
-
           setForm({
             nombre_completo: [perfil.nombre, perfil.primer_apellido, perfil.segundo_apellido].filter(Boolean).join(' '),
-            numero_telefono: perfil.numero_telefono || '',
-            sexo:            perfil.sexo            || 'Otro',
+            numero_telefono:  perfil.numero_telefono  || '',
+            sexo:             perfil.sexo             || 'Otro',
             fecha_nacimiento: perfil.fecha_nacimiento || '',
             tipo_sangre: pac?.tipo_sangre || 'O+',
             nss:         pac?.nss         || '',
@@ -164,15 +149,11 @@ export default function PerfilPage() {
               }
             }
           })
-
-          // Banner de advertencia
-          const ok =
-            !!perfil.numero_telefono &&
-            !!perfil.sexo &&
-            !!perfil.fecha_nacimiento &&
-            !!perfil.id_direccion &&
+          setIsComplete(
+            !!perfil.numero_telefono && !!perfil.sexo &&
+            !!perfil.fecha_nacimiento && !!perfil.id_direccion &&
             !!ce?.id_contacto_emergencia
-          setIsComplete(ok)
+          )
         } else {
           setIsComplete(false)
         }
@@ -185,7 +166,7 @@ export default function PerfilPage() {
     load()
   }, [])
 
-  // ── Guardar ───────────────────────────────────────────────────────────────
+  // ── Guardar ────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     setSaving(true)
     setMensaje(null)
@@ -193,76 +174,57 @@ export default function PerfilPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No hay sesión activa.')
 
-      // PASO 1: Dirección del contacto de emergencia
       const { data: dirC, error: eDirC } = await supabase
-        .from('direccion')
-        .upsert({ ...form.contacto.direccion })
-        .select('id_direccion')
-        .single()
+        .from('direccion').upsert({ ...form.contacto.direccion })
+        .select('id_direccion').single()
       if (eDirC) throw eDirC
 
-      // PASO 2: Contacto de emergencia
       const { data: cont, error: eCont } = await supabase
-        .from('contacto_emergencia')
-        .upsert({
+        .from('contacto_emergencia').upsert({
           id_contacto_emergencia: form.contacto.id_contacto_emergencia,
           nombre:                 form.contacto.nombre,
           primer_apellido:        form.contacto.primer_apellido,
           segundo_apellido:       form.contacto.segundo_apellido,
-          parentesco:             form.contacto.parentesco,
+          parentesco:             form.contacto.parentesco.trim(),
           sexo:                   form.contacto.sexo,
           correo_electronico:     form.contacto.correo_electronico,
           numero_telefono:        form.contacto.numero_telefono,
           segundo_telefono:       form.contacto.segundo_telefono,
           tipo_contacto_pref:     form.contacto.tipo_contacto_pref,
-          disponibilidad_horaria: form.contacto.disponibilidad_horaria,
+          disponibilidad_horaria: form.contacto.disponibilidad_horaria.trim(),
           id_direccion:           dirC.id_direccion,
-        })
-        .select('id_contacto_emergencia')
-        .single()
+        }).select('id_contacto_emergencia').single()
       if (eCont) throw eCont
 
-      // PASO 3: Dirección del paciente
       const { data: dirU, error: eDirU } = await supabase
-        .from('direccion')
-        .upsert({ ...form.direccion })
-        .select('id_direccion')
-        .single()
+        .from('direccion').upsert({ ...form.direccion })
+        .select('id_direccion').single()
       if (eDirU) throw eDirU
 
-      // PASO 4: Perfil
-      const partes = form.nombre_completo.trim().split(/\s+/)
-      const nombre      = partes[0]              || 'Paciente'
-      const primerAp    = partes[1]              || 'Sin Apellido'
-      const segundoAp   = partes.slice(2).join(' ') || ''
+      const partes    = form.nombre_completo.trim().split(/\s+/)
+      const nombre    = partes[0]                || 'Paciente'
+      const primerAp  = partes[1]                || 'Sin Apellido'
+      const segundoAp = partes.slice(2).join(' ') || ''
 
-      const { error: ePerfil } = await supabase
-        .from('perfil')
-        .upsert({
-          id_perfil:        user.id,
-          nombre,
-          primer_apellido:  primerAp,
-          segundo_apellido: segundoAp,
-          correo_electronico: user.email,
-          numero_telefono:  form.numero_telefono,
-          sexo:             form.sexo,
-          fecha_nacimiento: form.fecha_nacimiento || null,
-          id_direccion:     dirU.id_direccion,
-        })
+      const { error: ePerfil } = await supabase.from('perfil').upsert({
+        id_perfil:          user.id,
+        nombre, primer_apellido: primerAp, segundo_apellido: segundoAp,
+        correo_electronico: user.email,
+        numero_telefono:    form.numero_telefono,
+        sexo:               form.sexo,
+        fecha_nacimiento:   form.fecha_nacimiento || null,
+        id_direccion:       dirU.id_direccion,
+      })
       if (ePerfil) throw ePerfil
 
-      // PASO 5: Paciente
-      const { error: ePac } = await supabase
-        .from('paciente')
-        .upsert({
-          id_paciente:            user.id,
-          tipo_sangre:            form.tipo_sangre,
-          nss:                    form.nss,
-          id_contacto_emergencia: cont.id_contacto_emergencia,
-        })
+      const { error: ePac } = await supabase.from('paciente').upsert({
+        id_paciente:            user.id,
+        tipo_sangre:            form.tipo_sangre,
+        nss:                    form.nss,
+        id_contacto_emergencia: cont.id_contacto_emergencia,
+      })
       if (ePac) throw ePac
 
-      // Cambiar contraseña (opcional)
       if (showPassword && newPassword.length >= 8) {
         const { error: ePass } = await supabase.auth.updateUser({ password: newPassword })
         if (ePass) throw ePass
@@ -278,7 +240,7 @@ export default function PerfilPage() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) return <div className="p-10">Cargando...</div>
 
   const fullName = form.nombre_completo || authUser?.user_metadata?.full_name || 'Paciente'
@@ -296,34 +258,30 @@ export default function PerfilPage() {
               <button className='btn-regresar'>← Regresar al inicio</button>
             </Link>
           </div>
-
           <div className="p-avatar">{initial}</div>
           <div className="user-name" style={{ color: '#fff', fontWeight: 900 }}>{fullName}</div>
           <div className="user-email" style={{ fontSize: '0.8rem', opacity: 0.7, marginBottom: '20px' }}>{email}</div>
-
           <div className="physio-info-card" style={{
             background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '12px',
             width: '100%', fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '10px'
           }}>
             <div style={{ color: '#fff', opacity: 0.6, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Tu Fisioterapeuta</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', marginBottom: '6px' }}>
-              <span>👨‍⚕️</span> <span style={{ fontWeight: 600 }}>Dr. Alejandro García</span>
+              <span>👨‍⚕️</span><span style={{ fontWeight: 600 }}>Dr. Alejandro García</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.9, marginBottom: '6px' }}>
-              <span>🎓</span> <span>Rehabilitación Deportiva</span>
+              <span>🎓</span><span>Rehabilitación Deportiva</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.9 }}>
-              <span>🏫</span> <span>UNAM</span>
+              <span>🏫</span><span>UNAM</span>
             </div>
           </div>
-
           <div className="p-divider" style={{ margin: '20px 0' }} />
         </div>
 
         {/* ── LADO DERECHO ── */}
         <div className="p-right">
 
-          {/* Banner */}
           {!isComplete && (
             <div className="warning-banner" style={{
               background: '#FFF4E5', borderLeft: '4px solid #FFA117', padding: '16px',
@@ -353,8 +311,7 @@ export default function PerfilPage() {
               <div className="fl">Nombre Completo</div>
               <div className="p-fw">
                 <span className="p-fi">👤</span>
-                <input className="p-input" type="text"
-                  value={form.nombre_completo}
+                <input className="p-input" type="text" value={form.nombre_completo}
                   onChange={e => setForm(f => ({ ...f, nombre_completo: e.target.value }))} />
               </div>
             </div>
@@ -382,8 +339,7 @@ export default function PerfilPage() {
               <div className="p-fw">
                 <span className="p-fi">🚻</span>
                 <select className="p-input" style={{ appearance: 'none' }}
-                  value={form.sexo}
-                  onChange={e => setForm(f => ({ ...f, sexo: e.target.value }))}>
+                  value={form.sexo} onChange={e => setForm(f => ({ ...f, sexo: e.target.value }))}>
                   <option value="Femenino">Femenino</option>
                   <option value="Masculino">Masculino</option>
                   <option value="Otro">Otro</option>
@@ -395,8 +351,7 @@ export default function PerfilPage() {
               <div className="fl">Fecha de nacimiento</div>
               <div className="p-fw">
                 <span className="p-fi">🗓️</span>
-                <input className="p-input" type="date"
-                  value={form.fecha_nacimiento}
+                <input className="p-input" type="date" value={form.fecha_nacimiento}
                   onChange={e => setForm(f => ({ ...f, fecha_nacimiento: e.target.value }))} />
               </div>
             </div>
@@ -421,8 +376,7 @@ export default function PerfilPage() {
                   <div className="p-fw">
                     <span className="p-fi">📄</span>
                     <input className="p-input" type="text" placeholder="Número de NSS"
-                      value={form.nss}
-                      onChange={e => setForm(f => ({ ...f, nss: e.target.value }))} />
+                      value={form.nss} onChange={e => setForm(f => ({ ...f, nss: e.target.value }))} />
                   </div>
                 </div>
               </div>
@@ -431,50 +385,7 @@ export default function PerfilPage() {
             {/* Dirección del paciente */}
             <div className="p-full">
               <div className="fl">Dirección</div>
-              <div className="p-grid-inner" style={{ marginTop: '12px' }}>
-                <div>
-                  <div className="fl-dir">País</div>
-                  <div className="p-fw"><span className="p-fi">📍</span>
-                    <input className="p-input" type="text" placeholder="Ej. México"
-                      value={form.direccion.pais} onChange={e => setDir('pais', e.target.value)} /></div>
-                </div>
-                <div>
-                  <div className="fl-dir">Estado</div>
-                  <div className="p-fw"><span className="p-fi">📍</span>
-                    <input className="p-input" type="text" placeholder="Ej. Puebla"
-                      value={form.direccion.estado} onChange={e => setDir('estado', e.target.value)} /></div>
-                </div>
-              </div>
-              <div className="fl-dir">Municipio</div>
-              <div className="p-fw"><span className="p-fi">📍</span>
-                <input className="p-input" type="text" placeholder="Municipio"
-                  value={form.direccion.municipio} onChange={e => setDir('municipio', e.target.value)} /></div>
-              <div className="fl-dir">Colonia</div>
-              <div className="p-fw"><span className="p-fi">📍</span>
-                <input className="p-input" type="text" placeholder="Colonia"
-                  value={form.direccion.colonia} onChange={e => setDir('colonia', e.target.value)} /></div>
-              <div className="fl-dir">Calle</div>
-              <div className="p-fw"><span className="p-fi">🏠</span>
-                <input className="p-input" type="text" placeholder="Av. Siempre Viva 123"
-                  value={form.direccion.calle} onChange={e => setDir('calle', e.target.value)} /></div>
-              <div className="p-grid-inner" style={{ marginTop: '12px' }}>
-                <div>
-                  <div className="fl-dir">Número exterior</div>
-                  <div className="p-fw"><span className="p-fi">#️⃣</span>
-                    <input className="p-input" type="text" placeholder="No. Ext"
-                      value={form.direccion.numero_exterior} onChange={e => setDir('numero_exterior', e.target.value)} /></div>
-                </div>
-                <div>
-                  <div className="fl-dir">Número interior</div>
-                  <div className="p-fw"><span className="p-fi">#️⃣</span>
-                    <input className="p-input" type="text" placeholder="No. Int"
-                      value={form.direccion.numero_interior} onChange={e => setDir('numero_interior', e.target.value)} /></div>
-                </div>
-              </div>
-              <div className="fl-dir">Código postal</div>
-              <div className="p-fw"><span className="p-fi">📮</span>
-                <input className="p-input" type="text" placeholder="72000"
-                  value={form.direccion.codigo_postal} onChange={e => setDir('codigo_postal', e.target.value)} /></div>
+              <DireccionBlock prefix="pac" value={form.direccion} onChange={setDir} />
             </div>
           </div>
 
@@ -486,7 +397,8 @@ export default function PerfilPage() {
               <div className="fl">Nombre del Contacto</div>
               <div className="p-fw"><span className="p-fi">👤</span>
                 <input className="p-input" type="text" placeholder="Nombre(s)"
-                  value={form.contacto.nombre} onChange={e => setCont('nombre', e.target.value)} /></div>
+                  value={form.contacto.nombre} onChange={e => setCont('nombre', e.target.value)} />
+              </div>
             </div>
 
             <div className="p-full">
@@ -495,13 +407,15 @@ export default function PerfilPage() {
                   <div className="fl">Primer Apellido</div>
                   <div className="p-fw"><span className="p-fi">👤</span>
                     <input className="p-input" type="text" placeholder="1er Apellido"
-                      value={form.contacto.primer_apellido} onChange={e => setCont('primer_apellido', e.target.value)} /></div>
+                      value={form.contacto.primer_apellido} onChange={e => setCont('primer_apellido', e.target.value)} />
+                  </div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Segundo Apellido</div>
                   <div className="p-fw"><span className="p-fi">👤</span>
                     <input className="p-input" type="text" placeholder="2do Apellido"
-                      value={form.contacto.segundo_apellido} onChange={e => setCont('segundo_apellido', e.target.value)} /></div>
+                      value={form.contacto.segundo_apellido} onChange={e => setCont('segundo_apellido', e.target.value)} />
+                  </div>
                 </div>
               </div>
 
@@ -509,8 +423,26 @@ export default function PerfilPage() {
                 <div style={{ flex: 1 }}>
                   <div className="fl">Parentesco</div>
                   <div className="p-fw"><span className="p-fi">🤝</span>
-                    <input className="p-input" type="text" placeholder="Ej. Padre, Cónyuge"
-                      value={form.contacto.parentesco} onChange={e => setCont('parentesco', e.target.value)} /></div>
+                    <select className="p-input" style={{ appearance: 'none' }}
+                      value={
+                        ['Padre','Madre','Hermano/a','Cónyuge','Hijo/a','Abuelo/a','Tío/a','Amigo/a',''].includes(form.contacto.parentesco)
+                          ? form.contacto.parentesco : 'Otro'
+                      }
+                      onChange={e => setCont('parentesco', e.target.value !== 'Otro' ? e.target.value : ' ')}>
+                      <option value="">Seleccionar...</option>
+                      <option>Padre</option><option>Madre</option><option>Hermano/a</option>
+                      <option>Cónyuge</option><option>Hijo/a</option><option>Abuelo/a</option>
+                      <option>Tío/a</option><option>Amigo/a</option><option>Otro</option>
+                    </select>
+                  </div>
+                  {!['Padre','Madre','Hermano/a','Cónyuge','Hijo/a','Abuelo/a','Tío/a','Amigo/a',''].includes(form.contacto.parentesco) && (
+                    <div className="p-fw" style={{ marginTop: '8px' }}>
+                      <span className="p-fi">✏️</span>
+                      <input className="p-input" type="text" placeholder="Ej. Tutor, Padrino..."
+                        value={form.contacto.parentesco.trim()}
+                        onChange={e => setCont('parentesco', e.target.value)} autoFocus />
+                    </div>
+                  )}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Sexo</div>
@@ -529,7 +461,8 @@ export default function PerfilPage() {
               <div className="fl">Correo electrónico</div>
               <div className="p-fw"><span className="p-fi">✉️</span>
                 <input className="p-input" type="email" placeholder="correo@ejemplo.com"
-                  value={form.contacto.correo_electronico} onChange={e => setCont('correo_electronico', e.target.value)} /></div>
+                  value={form.contacto.correo_electronico} onChange={e => setCont('correo_electronico', e.target.value)} />
+              </div>
             </div>
 
             <div className="p-full">
@@ -538,15 +471,18 @@ export default function PerfilPage() {
                   <div className="fl">Teléfono Principal</div>
                   <div className="p-fw"><span className="p-fi">📞</span>
                     <input className="p-input" type="text" placeholder="55..."
-                      value={form.contacto.numero_telefono} onChange={e => setCont('numero_telefono', e.target.value)} /></div>
+                      value={form.contacto.numero_telefono} onChange={e => setCont('numero_telefono', e.target.value)} />
+                  </div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Segundo Teléfono</div>
                   <div className="p-fw"><span className="p-fi">📱</span>
                     <input className="p-input" type="text" placeholder="Opcional"
-                      value={form.contacto.segundo_telefono} onChange={e => setCont('segundo_telefono', e.target.value)} /></div>
+                      value={form.contacto.segundo_telefono} onChange={e => setCont('segundo_telefono', e.target.value)} />
+                  </div>
                 </div>
               </div>
+
               <div className="p-grid-inner" style={{ display: 'flex', gap: '15px', marginTop: '12px' }}>
                 <div style={{ flex: 1 }}>
                   <div className="fl">Contacto Preferido</div>
@@ -561,59 +497,41 @@ export default function PerfilPage() {
                 <div style={{ flex: 1 }}>
                   <div className="fl">Disponibilidad Horaria</div>
                   <div className="p-fw"><span className="p-fi">🕒</span>
-                    <input className="p-input" type="text" placeholder="Ej. 9:00 - 18:00"
-                      value={form.contacto.disponibilidad_horaria} onChange={e => setCont('disponibilidad_horaria', e.target.value)} /></div>
+                    <select className="p-input" style={{ appearance: 'none' }}
+                      value={
+                        ['Todos los días, todo el día','Horario laboral (9:00-18:00)','Solo fines de semana',
+                         'Fuera de horario laboral (18:00-9:00)','Solo horario escolar (8:00-3:00, lun-virn)','']
+                          .includes(form.contacto.disponibilidad_horaria)
+                          ? form.contacto.disponibilidad_horaria : 'Disponibilidad personalizada'
+                      }
+                      onChange={e => setCont('disponibilidad_horaria', e.target.value !== 'Disponibilidad personalizada' ? e.target.value : ' ')}>
+                      <option value="">Seleccionar...</option>
+                      <option>Todos los días, todo el día</option>
+                      <option>Horario laboral (9:00-18:00)</option>
+                      <option>Solo fines de semana</option>
+                      <option>Fuera de horario laboral (18:00-9:00)</option>
+                      <option>Solo horario escolar (8:00-3:00, lun-virn)</option>
+                      <option>Disponibilidad personalizada</option>
+                    </select>
+                  </div>
+                  {!['Todos los días, todo el día','Horario laboral (9:00-18:00)','Solo fines de semana',
+                     'Fuera de horario laboral (18:00-9:00)','Solo horario escolar (8:00-3:00, lun-virn)','']
+                      .includes(form.contacto.disponibilidad_horaria) && (
+                    <div className="p-fw" style={{ marginTop: '8px' }}>
+                      <span className="p-fi">✏️</span>
+                      <input className="p-input" type="text" placeholder="Ej. Lunes y miércoles de 10:00 a 14:00"
+                        value={form.contacto.disponibilidad_horaria.trim()}
+                        onChange={e => setCont('disponibilidad_horaria', e.target.value)} autoFocus />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Dirección del contacto */}
             <div className="p-full" style={{ marginTop: '25px', borderTop: '1px solid #eee', paddingTop: '20px' }}>
-              <div className="fl" style={{ marginBottom: '15px', color: '#5499C7', fontWeight: 'bold' }}>DIRECCIÓN DEL CONTACTO</div>
-              <div className="p-grid-inner">
-                <div style={{ flex: 1 }}>
-                  <div className="fl-dir">PAÍS</div>
-                  <div className="p-fw"><span className="p-fi">📍</span>
-                    <input className="p-input" type="text" placeholder="Ej. México"
-                      value={form.contacto.direccion.pais} onChange={e => setCDir('pais', e.target.value)} /></div>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div className="fl-dir">ESTADO</div>
-                  <div className="p-fw"><span className="p-fi">📍</span>
-                    <input className="p-input" type="text" placeholder="Ej. Puebla"
-                      value={form.contacto.direccion.estado} onChange={e => setCDir('estado', e.target.value)} /></div>
-                </div>
-              </div>
-              <div className="fl-dir" style={{ marginTop: '12px' }}>MUNICIPIO</div>
-              <div className="p-fw"><span className="p-fi">📍</span>
-                <input className="p-input" type="text" placeholder="Municipio"
-                  value={form.contacto.direccion.municipio} onChange={e => setCDir('municipio', e.target.value)} /></div>
-              <div className="fl-dir" style={{ marginTop: '12px' }}>COLONIA</div>
-              <div className="p-fw"><span className="p-fi">📍</span>
-                <input className="p-input" type="text" placeholder="Colonia"
-                  value={form.contacto.direccion.colonia} onChange={e => setCDir('colonia', e.target.value)} /></div>
-              <div className="fl-dir" style={{ marginTop: '12px' }}>CALLE</div>
-              <div className="p-fw"><span className="p-fi">🏠</span>
-                <input className="p-input" type="text" placeholder="Av. Siempre Viva 123"
-                  value={form.contacto.direccion.calle} onChange={e => setCDir('calle', e.target.value)} /></div>
-              <div className="p-grid-inner" style={{ marginTop: '12px' }}>
-                <div style={{ flex: 1 }}>
-                  <div className="fl-dir">NÚMERO EXTERIOR</div>
-                  <div className="p-fw"><span className="p-fi">#️⃣</span>
-                    <input className="p-input" type="text" placeholder="No. Ext"
-                      value={form.contacto.direccion.numero_exterior} onChange={e => setCDir('numero_exterior', e.target.value)} /></div>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div className="fl-dir">NÚMERO INTERIOR</div>
-                  <div className="p-fw"><span className="p-fi">#️⃣</span>
-                    <input className="p-input" type="text" placeholder="No. Int"
-                      value={form.contacto.direccion.numero_interior} onChange={e => setCDir('numero_interior', e.target.value)} /></div>
-                </div>
-              </div>
-              <div className="fl-dir" style={{ marginTop: '12px' }}>CÓDIGO POSTAL</div>
-              <div className="p-fw"><span className="p-fi">📮</span>
-                <input className="p-input" type="text" placeholder="72000"
-                  value={form.contacto.direccion.codigo_postal} onChange={e => setCDir('codigo_postal', e.target.value)} /></div>
+              <div className="fl" style={{ marginBottom: '8px', color: '#5499C7', fontWeight: 'bold' }}>DIRECCIÓN DEL CONTACTO</div>
+              <DireccionBlock prefix="cont" value={form.contacto.direccion} onChange={setCDir} />
             </div>
           </div>
 
@@ -647,7 +565,6 @@ export default function PerfilPage() {
             <div style={{ padding: '10px', fontSize: '0.8rem', color: '#999' }}>Tu contraseña está encriptada.</div>
           )}
 
-          {/* Mensaje de feedback */}
           {mensaje && (
             <div style={{
               marginTop: '16px', padding: '12px 16px', borderRadius: '8px',
