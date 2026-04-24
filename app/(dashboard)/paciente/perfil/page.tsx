@@ -1,5 +1,6 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '../../../../lib/supabase'
 import Link from 'next/link'
 import { DireccionBlock } from '@/app/components/Direccionblock'
@@ -70,6 +71,13 @@ export default function PerfilPage() {
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [mensaje, setMensaje]   = useState<{ tipo: 'exito' | 'error'; texto: string } | null>(null)
+  const [fisio, setFisio]       = useState<any>(null)
+  const router = useRouter()
+
+  const handleSignOut = useCallback(async () => {
+    await supabase.auth.signOut()
+    router.push('/')
+  }, [router])
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   const setDir = (field: keyof DireccionForm, val: string) =>
@@ -100,6 +108,21 @@ export default function PerfilPage() {
           .select('*, contacto_emergencia(*, direccion(*))')
           .eq('id_paciente', user.id).maybeSingle()
         if (ePac) throw ePac
+
+        // ── Consulta 3: fisioterapeuta asignado al paciente ─────────────
+        let fisioData = null
+        if (pac) {
+          const { data: rel } = await supabase
+            .from('paciente_fisioterapeuta')
+            .select('fisioterapeuta(*, perfil(nombre, primer_apellido, segundo_apellido, correo_electronico, numero_telefono))')
+            .eq('id_paciente', user.id)
+            .eq('es_principal', true)
+            .maybeSingle()
+          fisioData = rel?.fisioterapeuta ?? null
+
+          // Solo mostramos el fisio principal, si no hay → null
+        }
+        setFisio(fisioData)
 
         const db = perfil ? { ...perfil, paciente: pac } : null
         setDbData(db)
@@ -266,15 +289,37 @@ export default function PerfilPage() {
             width: '100%', fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '10px'
           }}>
             <div style={{ color: '#fff', opacity: 0.6, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Tu Fisioterapeuta</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', marginBottom: '6px' }}>
-              <span>👨‍⚕️</span><span style={{ fontWeight: 600 }}>Dr. Alejandro García</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.9, marginBottom: '6px' }}>
-              <span>🎓</span><span>Rehabilitación Deportiva</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.9 }}>
-              <span>🏫</span><span>UNAM</span>
-            </div>
+            {fisio ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', marginBottom: '6px' }}>
+                  <span>👨‍⚕️</span>
+                  <span style={{ fontWeight: 600 }}>
+                    {[fisio.perfil?.nombre, fisio.perfil?.primer_apellido, fisio.perfil?.segundo_apellido].filter(Boolean).join(' ')}
+                  </span>
+                </div>
+                {fisio.especialidad && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.9, marginBottom: '6px' }}>
+                    <span>🎓</span><span>{fisio.especialidad}</span>
+                  </div>
+                )}
+                {fisio.universidad_egreso && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.9, marginBottom: '6px' }}>
+                    <span>🏫</span><span>{fisio.universidad_egreso}</span>
+                  </div>
+                )}
+                {fisio.perfil?.correo_electronico && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', opacity: 0.8 }}>
+                    <span>✉️</span><span style={{ fontSize: '0.75rem' }}>{fisio.perfil.correo_electronico}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ color: '#fff', opacity: 0.5, fontSize: '0.8rem', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
+                <div style={{ fontSize: '1.5rem', marginBottom: '6px' }}>👨‍⚕️</div>
+                <div>Aún no tienes un fisioterapeuta asignado.</div>
+                <div style={{ fontSize: '0.7rem', marginTop: '4px', opacity: 0.7 }}>Se asignará cuando agendes tu primera cita.</div>
+              </div>
+            )}
           </div>
           <div className="p-divider" style={{ margin: '20px 0' }} />
         </div>
@@ -581,7 +626,7 @@ export default function PerfilPage() {
             <button onClick={handleSave} className="btn-save" disabled={saving}>
               {saving ? 'Guardando...' : 'Guardar cambios →'}
             </button>
-            <button onClick={() => supabase.auth.signOut()} className="btn-out">Cerrar sesión</button>
+            <button onClick={handleSignOut} className="btn-out">Cerrar sesión</button>
           </div>
         </div>
       </div>
