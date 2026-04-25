@@ -109,19 +109,42 @@ export default function PerfilPage() {
           .eq('id_paciente', user.id).maybeSingle()
         if (ePac) throw ePac
 
-        // ── Consulta 3: fisioterapeuta asignado al paciente ─────────────
-        let fisioData = null
-        if (pac) {
-          const { data: rel } = await supabase
-            .from('paciente_fisioterapeuta')
-            .select('fisioterapeuta(*, perfil(nombre, primer_apellido, segundo_apellido, correo_electronico, numero_telefono))')
-            .eq('id_paciente', user.id)
-            .eq('es_principal', true)
-            .maybeSingle()
-          fisioData = rel?.fisioterapeuta ?? null
+        // ── Consulta 3: fisioterapeuta asignado ──
+        const { data: relFisio } = await supabase
+          .from('paciente_fisioterapeuta')
+          .select('id_fisioterapeuta')
+          .eq('id_paciente', user.id)
+          .eq('es_principal', true)
+          .maybeSingle()
 
-          // Solo mostramos el fisio principal, si no hay → null
+        let fisioData = null
+        if (relFisio?.id_fisioterapeuta) {
+          const fisioId = relFisio.id_fisioterapeuta
+
+          const [{ data: fisioRow }, { data: perfilRow }] = await Promise.all([
+            supabase
+              .from('fisioterapeuta')
+              .select('especialidad, universidad_egreso')
+              .eq('id_fisioterapeuta', fisioId)
+              .maybeSingle(),
+
+            supabase
+              .from('perfil')                    // ← el nombre está aquí
+              .select('nombre, primer_apellido, segundo_apellido, correo_electronico, numero_telefono')
+              .eq('id_perfil', fisioId)          // ← mismo UUID
+              .maybeSingle(),
+          ])
+
+          if (fisioRow) {
+            fisioData = {
+              especialidad:      fisioRow.especialidad      ?? '',
+              universidad_egreso: fisioRow.universidad_egreso ?? '',
+              perfil: perfilRow ?? null,
+            }
+          }
         }
+
+        console.log('[Fisio] data:', fisioData)
         setFisio(fisioData)
 
         const db = perfil ? { ...perfil, paciente: pac } : null
