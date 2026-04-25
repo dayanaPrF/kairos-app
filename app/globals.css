@@ -1998,3 +1998,26 @@ html, body {
   text-decoration: none;
   box-shadow: 0 8px 20px rgba(50, 153, 188, 0.3);
 }
+
+/* ══════════════════════════════════════════════
+   FISIO DASHBOARD
+══════════════════════════════════════════════ */
+
+.fisio-home-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.fisio-home-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .fisio-home-grid {
+    grid-template-columns: 1fr;
+  }
+}
