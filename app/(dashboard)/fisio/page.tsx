@@ -11,6 +11,7 @@ import { FisioSectionAgenda } from '@/app/(dashboard)/fisio/sections/FisioSectio
 import { FisioSectionRutinas } from '@/app/(dashboard)/fisio/sections/FisioSectionRutinas'
 import { FisioSectionClinica } from '@/app/(dashboard)/fisio/sections/FisioSectionClinica'
 import { FisioSectionReportes } from '@/app/(dashboard)/fisio/sections/FisioSectionReportes'
+import { FisioSectionNotificaciones } from '@/app/(dashboard)/fisio/sections/FisioSectionNotificaciones'
 
 // ── 1. Agregar 'notificaciones' al tipo ──────────────────────────────────────
 type Section = 'home' | 'pacientes' | 'agenda' | 'rutinas' | 'mensajes' | 'clinica' | 'reportes' | 'notificaciones'
@@ -49,6 +50,18 @@ export default function FisioDashPage() {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
 
+  const refreshNotifCount = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase
+      .from('notificacion')
+      .select('id_notificacion')
+      .eq('id_perfil', user.id)
+      .is('deleted_at', null)
+      .not('estado', 'ilike', 'leida')
+    setNotifCount(data?.length ?? 0)
+  }
+
   // ── 2. Agregar notificaciones al nav ─────────────────────────────────────────
   const navItems: { key: Section; icon: string; label: string }[] = [
     { key: 'home',            icon: '🏠', label: 'Inicio'          },
@@ -66,7 +79,7 @@ export default function FisioDashPage() {
       case 'pacientes':      return <FisioSectionPacientes />
       case 'agenda':         return <FisioSectionAgenda />
       case 'rutinas':        return <FisioSectionRutinas />
-      case 'notificaciones': return <ComingSoon label="Notificaciones" icon="🔔" />
+      case 'notificaciones': return <FisioSectionNotificaciones onLeidas={refreshNotifCount} />
       case 'clinica':        return <FisioSectionClinica />
       case 'reportes':       return <FisioSectionReportes/>
     }
@@ -138,7 +151,7 @@ export default function FisioDashPage() {
             <button
               className="dash-t-btn"
               style={{ position: 'relative' }}
-              onClick={() => setActiveSection('notificaciones')}
+              onClick={() => { setActiveSection('notificaciones'); setNotifCount(0) }}
             >
               🔔 Notificaciones
               {notifCount > 0 && (
