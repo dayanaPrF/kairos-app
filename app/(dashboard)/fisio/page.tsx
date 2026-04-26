@@ -7,20 +7,24 @@ import Link from 'next/link'
 
 import { FisioSectionHome } from '@/app/(dashboard)/fisio/sections/FisioSectionHome'
 import { FisioSectionPacientes } from '@/app/(dashboard)/fisio/sections/FisioSectionPacientes'
+import { FisioSectionAgenda } from '@/app/(dashboard)/fisio/sections/FisioSectionAgenda'
+import { FisioSectionRutinas } from '@/app/(dashboard)/fisio/sections/FisioSectionRutinas'
+import { FisioSectionClinica } from '@/app/(dashboard)/fisio/sections/FisioSectionClinica'
+import { FisioSectionReportes } from '@/app/(dashboard)/fisio/sections/FisioSectionReportes'
 
-type Section = 'home' | 'pacientes' | 'agenda' | 'rutinas' | 'mensajes' | 'clinica' | 'reportes'
+// ── 1. Agregar 'notificaciones' al tipo ──────────────────────────────────────
+type Section = 'home' | 'pacientes' | 'agenda' | 'rutinas' | 'mensajes' | 'clinica' | 'reportes' | 'notificaciones'
 
 export default function FisioDashPage() {
-  const [userName, setUserName]   = useState('Fisioterapeuta')
+  const [userName, setUserName]         = useState('Fisioterapeuta')
   const [activeSection, setActiveSection] = useState<Section>('home')
-  const [notifCount, setNotifCount] = useState(0)
+  const [notifCount, setNotifCount]     = useState(0)
 
   useEffect(() => {
     const getProfile = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Nombre desde perfil
       const { data: perfil } = await supabase
         .from('perfil')
         .select('nombre')
@@ -29,7 +33,6 @@ export default function FisioDashPage() {
 
       if (perfil?.nombre) setUserName(perfil.nombre)
 
-      // Badge de notificaciones no leídas
       const { data } = await supabase
         .from('notificacion')
         .select('id_notificacion')
@@ -46,25 +49,26 @@ export default function FisioDashPage() {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
 
+  // ── 2. Agregar notificaciones al nav ─────────────────────────────────────────
   const navItems: { key: Section; icon: string; label: string }[] = [
-    { key: 'home',      icon: '🏠', label: 'Inicio'        },
-    { key: 'pacientes', icon: '🧑‍🦽', label: 'Mis pacientes' },
-    { key: 'agenda',    icon: '📅', label: 'Agenda'        },
-    { key: 'rutinas',   icon: '🏋️', label: 'Rutinas'       },
-    { key: 'mensajes',  icon: '💬', label: 'Mensajes'      },
-    { key: 'clinica',   icon: '🏥', label: 'Mi clínica'    },
-    { key: 'reportes',  icon: '📊', label: 'Reportes'      },
+    { key: 'home',            icon: '🏠', label: 'Inicio'          },
+    { key: 'pacientes',       icon: '🧑‍🦽', label: 'Mis pacientes'   },
+    { key: 'agenda',          icon: '📅', label: 'Agenda'          },
+    { key: 'rutinas',         icon: '🏋️', label: 'Rutinas'         },
+    { key: 'notificaciones',  icon: '🔔', label: 'Notificaciones'  },
+    { key: 'clinica',         icon: '🏥', label: 'Mi clínica'      },
+    { key: 'reportes',        icon: '📊', label: 'Reportes'        },
   ]
 
   const renderSection = () => {
     switch (activeSection) {
-      case 'home':      return <FisioSectionHome />
-      case 'pacientes': return <FisioSectionPacientes />
-      case 'agenda':    return <ComingSoon label="Agenda" icon="📅" />
-      case 'rutinas':   return <ComingSoon label="Rutinas" icon="🏋️" />
-      case 'mensajes':  return <ComingSoon label="Mensajes" icon="💬" />
-      case 'clinica':   return <ComingSoon label="Mi clínica" icon="🏥" />
-      case 'reportes':  return <ComingSoon label="Reportes" icon="📊" />
+      case 'home':           return <FisioSectionHome />
+      case 'pacientes':      return <FisioSectionPacientes />
+      case 'agenda':         return <FisioSectionAgenda />
+      case 'rutinas':        return <FisioSectionRutinas />
+      case 'notificaciones': return <ComingSoon label="Notificaciones" icon="🔔" />
+      case 'clinica':        return <FisioSectionClinica />
+      case 'reportes':       return <FisioSectionReportes/>
     }
   }
 
@@ -96,14 +100,18 @@ export default function FisioDashPage() {
             >
               <span className="dash-nav-icon">{icon}</span>
               {label}
-              {key === 'mensajes' && notifCount > 0 && (
+
+              {/* ── 3. Badge en sidebar solo en notificaciones ── */}
+              {key === 'notificaciones' && notifCount > 0 && (
                 <span style={{
                   marginLeft: 'auto', background: '#E74C3C', color: '#fff',
-                  borderRadius: '12px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700,
+                  borderRadius: '12px', padding: '1px 7px',
+                  fontSize: '0.7rem', fontWeight: 700,
                 }}>
-                  {notifCount}
+                  {notifCount > 9 ? '9+' : notifCount}
                 </span>
               )}
+
               {activeSection === key && <div className="dash-nav-dot" />}
             </button>
           ))}
@@ -125,10 +133,12 @@ export default function FisioDashPage() {
           </div>
 
           <div className="dash-topbar-actions">
+
+            {/* ── 4. Botón topbar navega a 'notificaciones', no a 'mensajes' ── */}
             <button
               className="dash-t-btn"
               style={{ position: 'relative' }}
-              onClick={() => setActiveSection('mensajes')}
+              onClick={() => setActiveSection('notificaciones')}
             >
               🔔 Notificaciones
               {notifCount > 0 && (
@@ -171,7 +181,6 @@ export default function FisioDashPage() {
   )
 }
 
-// Placeholder para secciones en construcción
 function ComingSoon({ label, icon }: { label: string; icon: string }) {
   return (
     <div style={{
