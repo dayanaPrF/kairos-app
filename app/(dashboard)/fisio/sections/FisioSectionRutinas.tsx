@@ -3,15 +3,14 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { EjercicioBuilder, type EjercicioFormData, type Pose } from '@/app/(dashboard)/fisio/sections/EjercicioBuilder'
 
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 interface BibliotecaEjercicio {
   id_biblioteca_ejercicio: string
   nombre_ejercicio: string
   descripcion: string | null
   icono: string | null
   repeticiones?: number | null
-  id_articulacion_principal: string | null
   secuencia_poses: Pose[]
-  nombre_articulacion?: string
 }
 
 interface Rutina {
@@ -79,26 +78,22 @@ interface FaseForm {
 
 type Tab = 'biblioteca_ej' | 'rutinas' | 'asignaciones'
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPONENTE PRINCIPAL
+// ═══════════════════════════════════════════════════════════════════════════════
 export function FisioSectionRutinas() {
   const [tab, setTab] = useState<Tab>('rutinas')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div>
-        <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text)', margin: 0 }}>
-          🏋️ Rutinas
-        </h2>
+        <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text)', margin: 0 }}>🏋️ Rutinas</h2>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', margin: '4px 0 0' }}>
           Crea y asigna rutinas de rehabilitación con evaluación IA por poses
         </p>
       </div>
 
-      <div style={{
-        display: 'flex', gap: '4px',
-        background: 'var(--bg)', borderRadius: '12px',
-        padding: '4px', border: '1px solid var(--border)',
-        width: 'fit-content',
-      }}>
+      <div style={{ display: 'flex', gap: '4px', background: 'var(--bg)', borderRadius: '12px', padding: '4px', border: '1px solid var(--border)', width: 'fit-content' }}>
         {([
           { key: 'rutinas',       label: '📋 Mis rutinas' },
           { key: 'biblioteca_ej', label: '📚 Biblioteca de ejercicios' },
@@ -123,6 +118,9 @@ export function FisioSectionRutinas() {
   )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB RUTINAS
+// ═══════════════════════════════════════════════════════════════════════════════
 function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
   const [vista, setVista]         = useState<'lista' | 'builder'>('lista')
   const [rutinas, setRutinas]     = useState<Rutina[]>([])
@@ -157,11 +155,7 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
     const asigsPor: Record<string, number> = {}
     for (const a of asigs ?? []) asigsPor[a.id_rutina] = (asigsPor[a.id_rutina] ?? 0) + 1
 
-    setRutinas(ruts.map(r => ({
-      ...r,
-      total_fases: fasesPor[r.id_rutina] ?? 0,
-      total_pacientes: asigsPor[r.id_rutina] ?? 0,
-    })))
+    setRutinas(ruts.map(r => ({ ...r, total_fases: fasesPor[r.id_rutina] ?? 0, total_pacientes: asigsPor[r.id_rutina] ?? 0 })))
     setLoading(false)
   }
 
@@ -179,12 +173,9 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
 
     const { data: ejercicios } = await supabase
       .from('ejercicio')
-      .select(`
-        id_ejercicio, nombre_ejercicio, orden, descripcion,
-        repeticiones, icono, id_fase,
-        id_biblioteca_ejercicio, secuencia_poses_personalizada,
-        biblioteca_ejercicio ( secuencia_poses )
-      `)
+      .select(`id_ejercicio, nombre_ejercicio, orden, descripcion, repeticiones, icono, id_fase,
+               id_biblioteca_ejercicio, secuencia_poses_personalizada,
+               biblioteca_ejercicio ( secuencia_poses )`)
       .in('id_fase', fases.map(f => f.id_fase))
       .is('deleted_at', null).order('orden')
 
@@ -230,16 +221,9 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
         <EmptyState icon="📋" title="Sin rutinas" desc="Crea tu primera rutina de rehabilitación" />
       ) : rutinas.map(r => (
         <div key={r.id_rutina} className="dash-card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '16px',
-            padding: '16px 20px', cursor: 'pointer',
-            borderBottom: expandida === r.id_rutina ? '1px solid var(--border)' : 'none',
-          }} onClick={() => expandir(r.id_rutina)}>
-            <div style={{
-              width: '44px', height: '44px', borderRadius: '12px',
-              background: 'var(--blue-xlight)', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', flexShrink: 0,
-            }}>📋</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '16px 20px', cursor: 'pointer', borderBottom: expandida === r.id_rutina ? '1px solid var(--border)' : 'none' }}
+            onClick={() => expandir(r.id_rutina)}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'var(--blue-xlight)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', flexShrink: 0 }}>📋</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text)' }}>{r.nombre_rutina}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: '3px', display: 'flex', gap: '12px' }}>
@@ -297,12 +281,15 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILDER DE RUTINA
+// ═══════════════════════════════════════════════════════════════════════════════
 function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar: () => void }) {
-  const [nombre, setNombre]     = useState('')
-  const [duracion, setDuracion] = useState('')
-  const [fases, setFases]       = useState<FaseForm[]>([])
-  const [saving, setSaving]     = useState(false)
-  const [error, setError]       = useState<string | null>(null)
+  const [nombre, setNombre]         = useState('')
+  const [duracion, setDuracion]     = useState('')
+  const [fases, setFases]           = useState<FaseForm[]>([])
+  const [saving, setSaving]         = useState(false)
+  const [error, setError]           = useState<string | null>(null)
   const [editandoEj, setEditandoEj] = useState<{ faseTmpId: string; ejTmpId: string | null } | null>(null)
   const [biblioteca, setBiblioteca] = useState<BibliotecaEjercicio[]>([])
   const [mostrarBib, setMostrarBib] = useState<string | null>(null)
@@ -313,16 +300,23 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
       if (!user) return
       const { data } = await supabase
         .from('biblioteca_ejercicio')
-        .select('id_biblioteca_ejercicio, nombre_ejercicio, descripcion, icono, secuencia_poses, id_articulacion_principal, ai_articulacion_config ( nombre_articulacion )')
+        .select('id_biblioteca_ejercicio, nombre_ejercicio, descripcion, icono, secuencia_poses')
         .eq('id_fisioterapeuta', user.id).is('deleted_at', null).order('nombre_ejercicio')
-      setBiblioteca((data ?? []).map((b: any) => ({ ...b, nombre_articulacion: b.ai_articulacion_config?.nombre_articulacion ?? null })))
+      setBiblioteca(data ?? [])
     }
     load()
   }, [])
 
-  const addFase = () => setFases(prev => [...prev, { tmpId: crypto.randomUUID(), numero_fase: prev.length + 1, nombre_fase: '', duracion_fase: '', indicaciones_medico: '', ejercicios: [] }])
-  const removeFase = (tmpId: string) => setFases(prev => prev.filter(f => f.tmpId !== tmpId).map((f, i) => ({ ...f, numero_fase: i + 1 })))
-  const updateFase = (tmpId: string, field: keyof FaseForm, value: string) => setFases(prev => prev.map(f => f.tmpId === tmpId ? { ...f, [field]: value } : f))
+  const addFase = () => setFases(prev => [...prev, {
+    tmpId: crypto.randomUUID(), numero_fase: prev.length + 1,
+    nombre_fase: '', duracion_fase: '', indicaciones_medico: '', ejercicios: [],
+  }])
+
+  const removeFase = (tmpId: string) =>
+    setFases(prev => prev.filter(f => f.tmpId !== tmpId).map((f, i) => ({ ...f, numero_fase: i + 1 })))
+
+  const updateFase = (tmpId: string, field: keyof FaseForm, value: string) =>
+    setFases(prev => prev.map(f => f.tmpId === tmpId ? { ...f, [field]: value } : f))
 
   const confirmarEjercicio = (faseTmpId: string, ejTmpId: string | null, data: EjercicioFormData) => {
     setFases(prev => prev.map(f => {
@@ -342,16 +336,23 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
     setFases(prev => prev.map(f => f.tmpId !== faseTmpId ? f : {
       ...f, ejercicios: [...f.ejercicios, {
         tmpId: crypto.randomUUID(), orden: f.ejercicios.length + 1,
-        nombre_ejercicio: bib.nombre_ejercicio, descripcion: bib.descripcion ?? '',
-        video_muestra: '', icono: bib.icono ?? '🏋️', repeticiones: '',
-        id_articulacion_principal: bib.id_articulacion_principal ?? '',
+        nombre_ejercicio: bib.nombre_ejercicio,
+        descripcion: bib.descripcion ?? '',
+        video_muestra: '',
+        icono: bib.icono ?? '🏋️',
+        repeticiones: '',
         secuencia_poses: bib.secuencia_poses ?? [],
-        guardar_en_biblioteca: false, tiene_override: false,
+        guardar_en_biblioteca: false,
+        tiene_override: false,
         id_biblioteca_ejercicio: bib.id_biblioteca_ejercicio,
       }],
     }))
     setMostrarBib(null)
   }
+
+  // Contar total de articulaciones en todas las poses de un ejercicio
+  const contarArts = (poses: Pose[]) =>
+    poses.reduce((acc, p) => acc + p.articulaciones.length, 0)
 
   const guardar = async () => {
     if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
@@ -375,21 +376,42 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
 
         for (const ej of fase.ejercicios) {
           let id_biblioteca: string | null = ej.id_biblioteca_ejercicio ?? null
+
+          // Guardar en biblioteca si el fisio lo pidió y no viene ya de una
           if (ej.guardar_en_biblioteca && !id_biblioteca) {
+            const posesLimpias = ej.secuencia_poses.map(({ tmpId, ...rest }) => rest)
             const { data: bibData } = await supabase
               .from('biblioteca_ejercicio')
-              .insert({ nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio', descripcion: ej.descripcion || null, video_muestra: ej.video_muestra || null, icono: ej.icono, id_fisioterapeuta: user.id, id_articulacion_principal: ej.id_articulacion_principal || null, secuencia_poses: ej.secuencia_poses.map(({ tmpId, ...rest }) => rest) })
+              .insert({
+                nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio',
+                descripcion: ej.descripcion || null,
+                video_muestra: ej.video_muestra || null,
+                icono: ej.icono,
+                id_fisioterapeuta: user.id,
+                secuencia_poses: posesLimpias,
+              })
               .select('id_biblioteca_ejercicio').single()
             id_biblioteca = bibData?.id_biblioteca_ejercicio ?? null
           }
+
+          // Poses personalizadas solo si viene de biblioteca Y tiene override
+          const posesPersonalizadas =
+            id_biblioteca && ej.tiene_override
+              ? ej.secuencia_poses.map(({ tmpId, ...rest }) => rest)
+              : null
+
           await supabase.from('ejercicio').insert({
-            nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio', orden: ej.orden,
-            descripcion: ej.descripcion || null, video_muestra: ej.video_muestra || null,
-            repeticiones: ej.repeticiones ? parseInt(ej.repeticiones) : null, icono: ej.icono,
-            id_fase: faseData.id_fase, id_biblioteca_ejercicio: id_biblioteca,
-            secuencia_poses_personalizada: (id_biblioteca && ej.tiene_override)
-              ? ej.secuencia_poses.map(({ tmpId, ...rest }) => rest) : null,
-            created_by: user.id, updated_by: user.id,
+            nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio',
+            orden: ej.orden,
+            descripcion: ej.descripcion || null,
+            video_muestra: ej.video_muestra || null,
+            repeticiones: ej.repeticiones ? parseInt(ej.repeticiones) : null,
+            icono: ej.icono,
+            id_fase: faseData.id_fase,
+            id_biblioteca_ejercicio: id_biblioteca,
+            secuencia_poses_personalizada: posesPersonalizadas,
+            created_by: user.id,
+            updated_by: user.id,
           })
         }
       }
@@ -440,7 +462,11 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
                   <div style={{ fontWeight: 600, fontSize: '0.83rem', color: 'var(--text)' }}>{ej.nombre_ejercicio || 'Sin nombre'}</div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: '2px', display: 'flex', gap: '8px' }}>
                     {ej.repeticiones && <span>{ej.repeticiones} reps</span>}
-                    {ej.secuencia_poses.length > 0 && <span style={{ color: '#4a7c0f' }}>🤖 {ej.secuencia_poses.length} poses</span>}
+                    {ej.secuencia_poses.length > 0 && (
+                      <span style={{ color: '#4a7c0f' }}>
+                        🤖 {ej.secuencia_poses.length} poses · {contarArts(ej.secuencia_poses)} articulaciones
+                      </span>
+                    )}
                     {ej.id_biblioteca_ejercicio && <span style={{ color: 'var(--blue)' }}>📚 De biblioteca</span>}
                   </div>
                 </div>
@@ -460,10 +486,12 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
 
             {editandoEj?.faseTmpId !== fase.tmpId && (
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={() => setEditandoEj({ faseTmpId: fase.tmpId, ejTmpId: null })} style={{ flex: 1, padding: '9px', borderRadius: '9px', border: '1.5px dashed var(--border)', background: 'transparent', color: 'var(--blue)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
+                <button onClick={() => setEditandoEj({ faseTmpId: fase.tmpId, ejTmpId: null })}
+                  style={{ flex: 1, padding: '9px', borderRadius: '9px', border: '1.5px dashed var(--border)', background: 'transparent', color: 'var(--blue)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
                   + Nuevo ejercicio
                 </button>
-                <button onClick={() => setMostrarBib(mostrarBib === fase.tmpId ? null : fase.tmpId)} style={{ flex: 1, padding: '9px', borderRadius: '9px', border: '1.5px dashed var(--blue)', background: 'var(--blue-xlight)', color: 'var(--blue)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
+                <button onClick={() => setMostrarBib(mostrarBib === fase.tmpId ? null : fase.tmpId)}
+                  style={{ flex: 1, padding: '9px', borderRadius: '9px', border: '1.5px dashed var(--blue)', background: 'var(--blue-xlight)', color: 'var(--blue)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
                   📚 De biblioteca
                 </button>
               </div>
@@ -475,11 +503,16 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
                 {biblioteca.length === 0 ? (
                   <div style={{ fontSize: '0.78rem', opacity: 0.5, fontStyle: 'italic' }}>Biblioteca vacía</div>
                 ) : biblioteca.map(b => (
-                  <div key={b.id_biblioteca_ejercicio} onClick={() => agregarDeBiblioteca(fase.tmpId, b)} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', background: 'var(--bg)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div key={b.id_biblioteca_ejercicio} onClick={() => agregarDeBiblioteca(fase.tmpId, b)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', background: 'var(--bg)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                     <span>{b.icono ?? '🏋️'}</span>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>{b.nombre_ejercicio}</div>
-                      {b.nombre_articulacion && <div style={{ fontSize: '0.7rem', color: 'var(--blue)' }}>🤖 {b.nombre_articulacion} · {b.secuencia_poses?.length ?? 0} poses</div>}
+                      <div style={{ fontSize: '0.7rem', color: 'var(--blue)' }}>
+                        {b.secuencia_poses?.length > 0
+                          ? `🤖 ${b.secuencia_poses.length} poses · ${contarArts(b.secuencia_poses)} articulaciones`
+                          : 'Sin evaluación IA'}
+                      </div>
                     </div>
                     <span style={{ color: 'var(--blue)', fontSize: '0.75rem', fontWeight: 700 }}>+ Agregar</span>
                   </div>
@@ -507,6 +540,9 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
   )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB BIBLIOTECA
+// ═══════════════════════════════════════════════════════════════════════════════
 function TabBibliotecaEjercicios() {
   const [ejercicios, setEjercicios] = useState<BibliotecaEjercicio[]>([])
   const [loading, setLoading]       = useState(true)
@@ -522,19 +558,22 @@ function TabBibliotecaEjercicios() {
     setUserId(user.id)
     const { data } = await supabase
       .from('biblioteca_ejercicio')
-      .select('id_biblioteca_ejercicio, nombre_ejercicio, descripcion, icono, secuencia_poses, id_articulacion_principal, ai_articulacion_config ( nombre_articulacion )')
+      .select('id_biblioteca_ejercicio, nombre_ejercicio, descripcion, icono, secuencia_poses')
       .eq('id_fisioterapeuta', user.id).is('deleted_at', null).order('nombre_ejercicio')
-    setEjercicios((data ?? []).map((b: any) => ({ ...b, nombre_articulacion: b.ai_articulacion_config?.nombre_articulacion ?? null })))
+    setEjercicios(data ?? [])
     setLoading(false)
   }
 
   const guardarNuevo = async (data: EjercicioFormData) => {
     if (!userId) return
+    const posesLimpias = data.secuencia_poses.map(({ tmpId, ...rest }) => rest)
     await supabase.from('biblioteca_ejercicio').insert({
-      nombre_ejercicio: data.nombre_ejercicio, descripcion: data.descripcion || null,
-      video_muestra: data.video_muestra || null, icono: data.icono, id_fisioterapeuta: userId,
-      id_articulacion_principal: data.id_articulacion_principal || null,
-      secuencia_poses: data.secuencia_poses.map(({ tmpId, ...rest }) => rest),
+      nombre_ejercicio: data.nombre_ejercicio,
+      descripcion: data.descripcion || null,
+      video_muestra: data.video_muestra || null,
+      icono: data.icono,
+      id_fisioterapeuta: userId,
+      secuencia_poses: posesLimpias,
     })
     setCreando(false)
     cargar()
@@ -545,6 +584,10 @@ function TabBibliotecaEjercicios() {
     await supabase.from('biblioteca_ejercicio').update({ deleted_at: new Date().toISOString() }).eq('id_biblioteca_ejercicio', id)
     setEjercicios(prev => prev.filter(e => e.id_biblioteca_ejercicio !== id))
   }
+
+  // Total de articulaciones en todas las poses
+  const contarArts = (poses: Pose[]) =>
+    poses.reduce((acc, p) => acc + p.articulaciones.length, 0)
 
   if (loading) return <LoadingState />
 
@@ -575,19 +618,24 @@ function TabBibliotecaEjercicios() {
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 800, fontSize: '0.92rem', color: 'var(--text)' }}>{ej.nombre_ejercicio}</div>
               {ej.descripcion && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginTop: '2px' }}>{ej.descripcion}</div>}
+
               <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
-                {ej.nombre_articulacion && <Chip label={`🤖 ${ej.nombre_articulacion}`} />}
                 {(ej.secuencia_poses?.length ?? 0) > 0
-                  ? <Chip label={`${ej.secuencia_poses.length} poses`} color="green" />
-                  : <Chip label="Sin IA" color="gray" />
+                  ? <Chip label={`🤖 ${ej.secuencia_poses.length} poses · ${contarArts(ej.secuencia_poses)} articulaciones`} color="green" />
+                  : <Chip label="Sin evaluación IA" color="gray" />
                 }
               </div>
+
+              {/* Preview de poses como timeline */}
               {(ej.secuencia_poses?.length ?? 0) > 0 && (
-                <div style={{ display: 'flex', gap: '6px', marginTop: '10px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '6px', marginTop: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                   {ej.secuencia_poses.map((pose, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <div style={{ background: 'var(--blue)', color: '#fff', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 800 }}>
-                        {(pose as any).angulo}°
+                      <div style={{ background: 'var(--blue-xlight)', border: '1px solid var(--blue)', borderRadius: '8px', padding: '3px 8px', fontSize: '0.68rem', fontWeight: 700, color: 'var(--blue)', whiteSpace: 'nowrap' }}>
+                        {pose.nombre}
+                        {pose.articulaciones.length > 0 && (
+                          <span style={{ opacity: 0.7, fontWeight: 500 }}> · {pose.articulaciones.length} art.</span>
+                        )}
                       </div>
                       {i < ej.secuencia_poses.length - 1 && <span style={{ color: 'var(--text-light)', fontSize: '0.7rem' }}>→</span>}
                     </div>
@@ -603,6 +651,9 @@ function TabBibliotecaEjercicios() {
   )
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB ASIGNACIONES (sin cambios)
+// ═══════════════════════════════════════════════════════════════════════════════
 function TabAsignaciones() {
   const [rutinas, setRutinas]           = useState<{ id_rutina: string; nombre_rutina: string }[]>([])
   const [pacientes, setPacientes]       = useState<PacienteOpt[]>([])
@@ -632,7 +683,9 @@ function TabAsignaciones() {
       const rutIds = (ruts ?? []).map(r => r.id_rutina)
       let asigs: RutinaPaciente[] = []
       if (rutIds.length) {
-        const { data: asigRaw } = await supabase.from('rutina_paciente').select('id_rutina_paciente, id_rutina, id_paciente, fecha_inicio, fecha_fin, activa').in('id_rutina', rutIds).is('deleted_at', null).order('activa', { ascending: false })
+        const { data: asigRaw } = await supabase.from('rutina_paciente')
+          .select('id_rutina_paciente, id_rutina, id_paciente, fecha_inicio, fecha_fin, activa')
+          .in('id_rutina', rutIds).is('deleted_at', null).order('activa', { ascending: false })
         const mapaR = Object.fromEntries((ruts ?? []).map(r => [r.id_rutina, r.nombre_rutina]))
         const mapaP = Object.fromEntries(pacs.map(p => [p.id_paciente, p.nombre]))
         asigs = (asigRaw ?? []).map(a => ({ ...a, nombre_rutina: mapaR[a.id_rutina], nombre_paciente: mapaP[a.id_paciente] }))
@@ -645,11 +698,18 @@ function TabAsignaciones() {
   const asignar = async () => {
     if (!selRutina || !selPac) { setError('Selecciona rutina y paciente'); return }
     setSaving(true); setError(null)
-    const { error: err } = await supabase.from('rutina_paciente').insert({ id_rutina: selRutina, id_paciente: selPac, fecha_inicio: fechaIni || null, fecha_fin: fechaFin || null, activa: true })
+    const { error: err } = await supabase.from('rutina_paciente').insert({
+      id_rutina: selRutina, id_paciente: selPac,
+      fecha_inicio: fechaIni || null, fecha_fin: fechaFin || null, activa: true,
+    })
     if (err) { setError(err.message); setSaving(false); return }
     const rutNombre = rutinas.find(r => r.id_rutina === selRutina)?.nombre_rutina ?? '—'
     const pacNombre = pacientes.find(p => p.id_paciente === selPac)?.nombre ?? 'Paciente'
-    setAsignaciones(prev => [{ id_rutina_paciente: crypto.randomUUID(), id_rutina: selRutina, id_paciente: selPac, fecha_inicio: fechaIni || null, fecha_fin: fechaFin || null, activa: true, nombre_rutina: rutNombre, nombre_paciente: pacNombre }, ...prev])
+    setAsignaciones(prev => [{
+      id_rutina_paciente: crypto.randomUUID(), id_rutina: selRutina, id_paciente: selPac,
+      fecha_inicio: fechaIni || null, fecha_fin: fechaFin || null, activa: true,
+      nombre_rutina: rutNombre, nombre_paciente: pacNombre,
+    }, ...prev])
     setSelRutina(''); setSelPac(''); setFechaIni(''); setFechaFin(''); setSaving(false)
   }
 
@@ -665,13 +725,25 @@ function TabAsignaciones() {
       <div className="dash-card">
         <div className="dash-card-title">➕ Nueva asignación</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '4px' }}>
-          <div><label style={labelStyle}>Rutina</label><select value={selRutina} onChange={e => setSelRutina(e.target.value)} style={selectStyle}><option value="">— Selecciona —</option>{rutinas.map(r => <option key={r.id_rutina} value={r.id_rutina}>{r.nombre_rutina}</option>)}</select></div>
-          <div><label style={labelStyle}>Paciente</label><select value={selPac} onChange={e => setSelPac(e.target.value)} style={selectStyle}><option value="">— Selecciona —</option>{pacientes.map(p => <option key={p.id_paciente} value={p.id_paciente}>{p.nombre}</option>)}</select></div>
+          <div><label style={labelStyle}>Rutina</label>
+            <select value={selRutina} onChange={e => setSelRutina(e.target.value)} style={selectStyle}>
+              <option value="">— Selecciona —</option>
+              {rutinas.map(r => <option key={r.id_rutina} value={r.id_rutina}>{r.nombre_rutina}</option>)}
+            </select>
+          </div>
+          <div><label style={labelStyle}>Paciente</label>
+            <select value={selPac} onChange={e => setSelPac(e.target.value)} style={selectStyle}>
+              <option value="">— Selecciona —</option>
+              {pacientes.map(p => <option key={p.id_paciente} value={p.id_paciente}>{p.nombre}</option>)}
+            </select>
+          </div>
           <div><label style={labelStyle}>Fecha inicio</label><input type="date" value={fechaIni} onChange={e => setFechaIni(e.target.value)} style={inputStyle} /></div>
           <div><label style={labelStyle}>Fecha fin (opcional)</label><input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} style={inputStyle} /></div>
         </div>
         {error && <div style={{ marginTop: '8px', color: '#c0392b', fontSize: '0.8rem' }}>⚠️ {error}</div>}
-        <button onClick={asignar} disabled={saving} style={{ ...btnPrimary, marginTop: '14px', opacity: saving ? 0.6 : 1 }}>{saving ? 'Asignando...' : '✅ Asignar rutina'}</button>
+        <button onClick={asignar} disabled={saving} style={{ ...btnPrimary, marginTop: '14px', opacity: saving ? 0.6 : 1 }}>
+          {saving ? 'Asignando...' : '✅ Asignar rutina'}
+        </button>
       </div>
 
       <div className="dash-card">
@@ -685,9 +757,13 @@ function TabAsignaciones() {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{a.nombre_paciente}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: '2px' }}>🏋️ {a.nombre_rutina}{a.fecha_inicio && ` · Inicio: ${a.fecha_inicio}`}{a.fecha_fin && ` · Fin: ${a.fecha_fin}`}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: '2px' }}>
+                  🏋️ {a.nombre_rutina}{a.fecha_inicio && ` · Inicio: ${a.fecha_inicio}`}{a.fecha_fin && ` · Fin: ${a.fecha_fin}`}
+                </div>
               </div>
-              <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: 700, background: a.activa ? '#eef8d6' : '#f0f0f0', color: a.activa ? '#76a82e' : '#999' }}>{a.activa ? 'Activa' : 'Finalizada'}</span>
+              <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: 700, background: a.activa ? '#eef8d6' : '#f0f0f0', color: a.activa ? '#76a82e' : '#999' }}>
+                {a.activa ? 'Activa' : 'Finalizada'}
+              </span>
               {a.activa && <button onClick={() => desactivar(a.id_rutina_paciente)} style={{ ...btnGhost, color: '#c0392b', fontSize: '0.75rem' }}>Finalizar</button>}
             </div>
           ))
@@ -697,19 +773,11 @@ function TabAsignaciones() {
   )
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function Chip({ label, color = 'blue' }: { label: string; color?: 'blue' | 'green' | 'yellow' | 'gray' }) {
-  const colors = {
-    blue:   { bg: 'var(--blue-xlight)', color: 'var(--blue)' },
-    green:  { bg: '#eef8d6',            color: '#4a7c0f'      },
-    yellow: { bg: '#fff3cd',            color: '#856404'      },
-    gray:   { bg: '#f0f0f0',            color: '#999'         },
-  }
+  const colors = { blue: { bg: 'var(--blue-xlight)', color: 'var(--blue)' }, green: { bg: '#eef8d6', color: '#4a7c0f' }, yellow: { bg: '#fff3cd', color: '#856404' }, gray: { bg: '#f0f0f0', color: '#999' } }
   const c = colors[color]
-  return (
-    <span style={{ background: c.bg, color: c.color, borderRadius: '8px', padding: '3px 9px', fontSize: '0.72rem', fontWeight: 700 }}>
-      {label}
-    </span>
-  )
+  return <span style={{ background: c.bg, color: c.color, borderRadius: '8px', padding: '3px 9px', fontSize: '0.72rem', fontWeight: 700 }}>{label}</span>
 }
 
 function LoadingState() {

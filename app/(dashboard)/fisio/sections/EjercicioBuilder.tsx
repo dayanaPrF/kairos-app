@@ -9,13 +9,21 @@ export interface Articulacion {
   puntos_mediapipe: string[]
 }
 
+// Una articulación dentro de una pose, con su ángulo
+export interface PoseArticulacion {
+  id_articulacion: string
+  nombre_articulacion: string   // desnormalizado para el UI
+  angulo: number
+  tolerancia: number
+}
+
+// Una pose = un keyframe con N articulaciones
 export interface Pose {
   tmpId: string
   orden: number
   nombre: string
-  angulo: number
-  tolerancia: number
   hold_sec: number
+  articulaciones: PoseArticulacion[]
 }
 
 export interface EjercicioFormData {
@@ -24,7 +32,6 @@ export interface EjercicioFormData {
   video_muestra: string
   icono: string
   repeticiones: string
-  id_articulacion_principal: string
   secuencia_poses: Pose[]
   guardar_en_biblioteca: boolean
   id_biblioteca_ejercicio?: string
@@ -39,7 +46,6 @@ const defaultEjercicio = (): EjercicioFormData => ({
   video_muestra: '',
   icono: '🏋️',
   repeticiones: '',
-  id_articulacion_principal: '',
   secuencia_poses: [],
   guardar_en_biblioteca: true,
   tiene_override: false,
@@ -61,36 +67,28 @@ export function EjercicioBuilder({
   onConfirmar,
   onCancelar,
 }: EjercicioBuilderProps) {
-  const [form, setForm]               = useState<EjercicioFormData>(ejercicioInicial ?? defaultEjercicio())
+  const [form, setForm]                     = useState<EjercicioFormData>(ejercicioInicial ?? defaultEjercicio())
   const [articulaciones, setArticulaciones] = useState<Articulacion[]>([])
-  const [loadingArts, setLoadingArts] = useState(true)
-  const [error, setError]             = useState<string | null>(null)
+  const [loadingArts, setLoadingArts]       = useState(true)
+  const [error, setError]                   = useState<string | null>(null)
 
   useEffect(() => {
     supabase
       .from('ai_articulacion_config')
       .select('id_articulacion, nombre_articulacion, puntos_mediapipe')
       .order('nombre_articulacion')
-      .then(({ data }) => {
-        setArticulaciones(data ?? [])
-        setLoadingArts(false)
-      })
+      .then(({ data }) => { setArticulaciones(data ?? []); setLoadingArts(false) })
   }, [])
 
   const update = (field: keyof EjercicioFormData, value: unknown) =>
     setForm(prev => ({ ...prev, [field]: value }))
 
+  // ── Poses ──────────────────────────────────────────────────────────────────
   const addPose = () => {
     const n = form.secuencia_poses.length + 1
-    const defaults: Record<number, { nombre: string; angulo: number }> = {
-      1: { nombre: 'Posición inicial', angulo: 170 },
-      2: { nombre: 'Punto medio',      angulo: 90  },
-      3: { nombre: 'Extensión máxima', angulo: 20  },
-    }
-    const d = defaults[n] ?? { nombre: `Pose ${n}`, angulo: 90 }
     update('secuencia_poses', [
       ...form.secuencia_poses,
-      { tmpId: crypto.randomUUID(), orden: n, nombre: d.nombre, angulo: d.angulo, tolerancia: 10, hold_sec: 1 },
+      { tmpId: crypto.randomUUID(), orden: n, nombre: `Pose ${n}`, hold_sec: 1, articulaciones: [] },
     ])
   }
 
@@ -99,10 +97,37 @@ export function EjercicioBuilder({
       form.secuencia_poses.filter(p => p.tmpId !== tmpId).map((p, i) => ({ ...p, orden: i + 1 }))
     )
 
-  const updatePose = (tmpId: string, field: keyof Pose, value: string | number) =>
-    update('secuencia_poses',
-      form.secuencia_poses.map(p => p.tmpId === tmpId ? { ...p, [field]: value } : p)
-    )
+  const updatePoseField = (tmpId: string, field: 'nombre' | 'hold_sec', value: string | number) =>
+    update('secuencia_poses', form.secuencia_poses.map(p => p.tmpId === tmpId ? { ...p, [field]: value } : p))
+
+  // Agregar articulación a una pose
+  const addArticulacion = (poseTmpId: string, art: Articulacion) =>
+    update('secuencia_poses', form.secuencia_poses.map(p => {
+      if (p.tmpId !== poseTmpId) return p
+      if (p.articulaciones.find(a => a.id_articulacion === art.id_articulacion)) return p // ya existe
+      return {
+        ...p,
+        articulaciones: [
+          ...p.articulaciones,
+          { id_articulacion: art.id_articulacion, nombre_articulacion: art.nombre_articulacion, angulo: 90, tolerancia: 10 },
+        ],
+      }
+    }))
+
+  const removeArticulacion = (poseTmpId: string, id_articulacion: string) =>
+    update('secuencia_poses', form.secuencia_poses.map(p =>
+      p.tmpId !== poseTmpId ? p : { ...p, articulaciones: p.articulaciones.filter(a => a.id_articulacion !== id_articulacion) }
+    ))
+
+  const updateArticulacion = (poseTmpId: string, id_articulacion: string, field: 'angulo' | 'tolerancia', value: number) =>
+    update('secuencia_poses', form.secuencia_poses.map(p =>
+      p.tmpId !== poseTmpId ? p : {
+        ...p,
+        articulaciones: p.articulaciones.map(a =>
+          a.id_articulacion !== id_articulacion ? a : { ...a, [field]: value }
+        ),
+      }
+    ))
 
   const confirmar = () => {
     if (!form.nombre_ejercicio.trim()) { setError('El nombre del ejercicio es obligatorio'); return }
@@ -110,20 +135,12 @@ export function EjercicioBuilder({
     onConfirmar(form)
   }
 
-  const articulacionSel = articulaciones.find(a => a.id_articulacion === form.id_articulacion_principal)
-
   return (
-    <div style={{
-      background: 'var(--bg)', borderRadius: '14px',
-      border: '1.5px solid var(--border)', padding: '20px',
-      display: 'flex', flexDirection: 'column', gap: '20px',
-    }}>
+    <div style={{ background: 'var(--bg)', borderRadius: '14px', border: '1.5px solid var(--border)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
       {/* Datos base */}
       <div>
-        <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text)', marginBottom: '12px' }}>
-          📋 Datos del ejercicio
-        </div>
+        <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text)', marginBottom: '12px' }}>📋 Datos del ejercicio</div>
         <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr', gap: '10px', marginBottom: '10px' }}>
           <select value={form.icono} onChange={e => update('icono', e.target.value)}
             style={{ border: '1.5px solid var(--border)', borderRadius: '9px', background: 'var(--bg)', fontSize: '1.3rem', cursor: 'pointer', textAlign: 'center', padding: '4px' }}>
@@ -151,98 +168,52 @@ export function EjercicioBuilder({
         </div>
       </div>
 
-      {/* Configuración IA */}
-      <div style={{
-        borderRadius: '12px', border: '1.5px solid var(--blue)',
-        background: 'var(--blue-xlight)', padding: '16px',
-        display: 'flex', flexDirection: 'column', gap: '14px',
-      }}>
-        <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--blue)' }}>
-          🤖 Configuración de IA — Poses y articulación
+      {/* Secuencia de poses */}
+      <div style={{ borderRadius: '12px', border: '1.5px solid var(--blue)', background: 'var(--blue-xlight)', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--blue)' }}>🤖 Secuencia de poses</div>
+          <button onClick={addPose} style={{ background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+            + Añadir pose
+          </button>
         </div>
 
-        <div>
-          <label style={{ ...labelStyle, color: 'var(--blue)' }}>Articulación a evaluar</label>
-          {loadingArts ? (
-            <div style={{ fontSize: '0.8rem', opacity: 0.5 }}>Cargando articulaciones...</div>
-          ) : (
-            <select value={form.id_articulacion_principal}
-              onChange={e => update('id_articulacion_principal', e.target.value)} style={selectStyle}>
-              <option value="">— Sin evaluación IA —</option>
-              {articulaciones.map(a => (
-                <option key={a.id_articulacion} value={a.id_articulacion}>{a.nombre_articulacion}</option>
-              ))}
-            </select>
-          )}
-          {articulacionSel && (
-            <div style={{ marginTop: '6px', fontSize: '0.72rem', color: 'var(--blue)', opacity: 0.8 }}>
-              Puntos MediaPipe: {articulacionSel.puntos_mediapipe.join(' → ')}
-            </div>
-          )}
-        </div>
-
-        {form.id_articulacion_principal && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-              <label style={{ ...labelStyle, color: 'var(--blue)', marginBottom: 0 }}>
-                Secuencia de poses (keyframes)
-              </label>
-              <button onClick={addPose} style={{
-                background: 'var(--blue)', color: '#fff', border: 'none',
-                borderRadius: '8px', padding: '5px 12px',
-                fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
-              }}>
-                + Añadir pose
-              </button>
-            </div>
-
-            {form.secuencia_poses.length === 0 ? (
-              <div style={{
-                padding: '16px', borderRadius: '10px',
-                border: '1.5px dashed rgba(75,179,214,0.4)',
-                textAlign: 'center', fontSize: '0.8rem', color: 'var(--blue)', opacity: 0.6,
-              }}>
-                Sin poses — el ejercicio no tendrá evaluación por ángulo
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <TimelinePoses poses={form.secuencia_poses} />
-                {form.secuencia_poses.map((pose, idx) => (
-                  <PoseCard
-                    key={pose.tmpId}
-                    pose={pose}
-                    index={idx}
-                    nombreArticulacion={articulacionSel?.nombre_articulacion ?? ''}
-                    onChange={(field, value) => updatePose(pose.tmpId, field, value)}
-                    onRemove={() => removePose(pose.tmpId)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+        {/* Timeline resumen */}
+        {form.secuencia_poses.length > 0 && (
+          <TimelinePoses poses={form.secuencia_poses} />
         )}
+
+        {form.secuencia_poses.length === 0 ? (
+          <div style={{ padding: '20px', borderRadius: '10px', border: '1.5px dashed rgba(75,179,214,0.4)', textAlign: 'center', fontSize: '0.82rem', color: 'var(--blue)', opacity: 0.6 }}>
+            Sin poses — el ejercicio no tendrá evaluación IA
+          </div>
+        ) : form.secuencia_poses.map((pose, idx) => (
+          <PoseCard
+            key={pose.tmpId}
+            pose={pose}
+            index={idx}
+            articulacionesDisponibles={articulaciones}
+            loadingArts={loadingArts}
+            onUpdateField={(field, value) => updatePoseField(pose.tmpId, field, value)}
+            onAddArt={art => addArticulacion(pose.tmpId, art)}
+            onRemoveArt={id => removeArticulacion(pose.tmpId, id)}
+            onUpdateArt={(id, field, value) => updateArticulacion(pose.tmpId, id, field, value)}
+            onRemove={() => removePose(pose.tmpId)}
+          />
+        ))}
       </div>
 
       {mostrarOpcionBiblioteca && !ejercicioInicial?.id_biblioteca_ejercicio && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '10px',
-          padding: '12px 14px', borderRadius: '10px',
-          background: '#f8fcff', border: '1px solid var(--border)',
-        }}>
-          <input type="checkbox" id="guardar-biblioteca" checked={form.guardar_en_biblioteca}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderRadius: '10px', background: '#f8fcff', border: '1px solid var(--border)' }}>
+          <input type="checkbox" id="guardar-bib" checked={form.guardar_en_biblioteca}
             onChange={e => update('guardar_en_biblioteca', e.target.checked)}
             style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: 'var(--blue)' }} />
-          <label htmlFor="guardar-biblioteca" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
+          <label htmlFor="guardar-bib" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
             Guardar en mi biblioteca para reutilizar en otras rutinas
           </label>
         </div>
       )}
 
-      {error && (
-        <div style={{ padding: '10px 14px', borderRadius: '9px', background: '#fde8e8', color: '#c0392b', fontSize: '0.8rem' }}>
-          ⚠️ {error}
-        </div>
-      )}
+      {error && <div style={{ padding: '10px 14px', borderRadius: '9px', background: '#fde8e8', color: '#c0392b', fontSize: '0.8rem' }}>⚠️ {error}</div>}
 
       <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
         <button onClick={onCancelar} style={btnOutline}>Cancelar</button>
@@ -252,36 +223,29 @@ export function EjercicioBuilder({
   )
 }
 
-// ─── Timeline visual ──────────────────────────────────────────────────────────
+// ─── Timeline resumen ─────────────────────────────────────────────────────────
 function TimelinePoses({ poses }: { poses: Pose[] }) {
-  if (poses.length === 0) return null
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center',
-      padding: '12px 16px', borderRadius: '10px',
-      background: 'rgba(255,255,255,0.7)',
-      border: '1px solid rgba(75,179,214,0.2)', overflowX: 'auto',
-    }}>
+    <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.7)', border: '1px solid rgba(75,179,214,0.2)', overflowX: 'auto', gap: '2px' }}>
       {poses.map((pose, idx) => (
         <div key={pose.tmpId} style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-            <div style={{
-              width: '42px', height: '42px', borderRadius: '50%',
-              background: 'var(--blue)', color: '#fff',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 900, fontSize: '0.8rem',
-              boxShadow: '0 2px 8px rgba(75,179,214,0.4)',
-            }}>
-              {pose.angulo}°
-            </div>
-            <div style={{ fontSize: '0.62rem', color: 'var(--blue)', fontWeight: 600, textAlign: 'center', maxWidth: '64px', lineHeight: 1.2 }}>
+            <div style={{ background: 'var(--blue)', color: '#fff', borderRadius: '10px', padding: '4px 10px', fontSize: '0.72rem', fontWeight: 800, whiteSpace: 'nowrap' }}>
               {pose.nombre}
+            </div>
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '120px' }}>
+              {pose.articulaciones.map(a => (
+                <span key={a.id_articulacion} style={{ fontSize: '0.6rem', background: 'rgba(75,179,214,0.15)', color: 'var(--blue)', borderRadius: '4px', padding: '1px 5px', fontWeight: 600 }}>
+                  {a.nombre_articulacion.split(' ')[0]} {a.angulo}°
+                </span>
+              ))}
+              {pose.articulaciones.length === 0 && (
+                <span style={{ fontSize: '0.6rem', color: '#ccc' }}>sin articulaciones</span>
+              )}
             </div>
           </div>
           {idx < poses.length - 1 && (
-            <div style={{ width: '36px', height: '2px', background: 'linear-gradient(to right, var(--blue), var(--blue-light))', position: 'relative', margin: '0 2px' }}>
-              <span style={{ position: 'absolute', top: '-8px', left: '50%', transform: 'translateX(-50%)', fontSize: '0.6rem', color: 'var(--blue)', opacity: 0.6 }}>→</span>
-            </div>
+            <div style={{ width: '28px', height: '2px', background: 'var(--blue)', opacity: 0.3, margin: '0 4px', flexShrink: 0 }} />
           )}
         </div>
       ))}
@@ -289,92 +253,166 @@ function TimelinePoses({ poses }: { poses: Pose[] }) {
   )
 }
 
-// ─── PoseCard con muñequito ───────────────────────────────────────────────────
-function PoseCard({ pose, index, onChange, onRemove, nombreArticulacion }: {
+// ─── PoseCard ─────────────────────────────────────────────────────────────────
+function PoseCard({
+  pose, index, articulacionesDisponibles, loadingArts,
+  onUpdateField, onAddArt, onRemoveArt, onUpdateArt, onRemove,
+}: {
   pose: Pose
   index: number
-  onChange: (field: keyof Pose, value: string | number) => void
+  articulacionesDisponibles: Articulacion[]
+  loadingArts: boolean
+  onUpdateField: (field: 'nombre' | 'hold_sec', value: string | number) => void
+  onAddArt: (art: Articulacion) => void
+  onRemoveArt: (id: string) => void
+  onUpdateArt: (id: string, field: 'angulo' | 'tolerancia', value: number) => void
   onRemove: () => void
-  nombreArticulacion: string
 }) {
+  const [showSelector, setShowSelector] = useState(false)
+
+  // Articulaciones que aún no están en esta pose
+  const disponibles = articulacionesDisponibles.filter(
+    a => !pose.articulaciones.find(pa => pa.id_articulacion === a.id_articulacion)
+  )
+
   return (
-    <div style={{
-      borderRadius: '12px', border: '1px solid rgba(75,179,214,0.3)',
-      background: 'rgba(255,255,255,0.9)', overflow: 'hidden',
-      boxShadow: '0 2px 8px rgba(75,179,214,0.08)',
-    }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px',
-        background: 'rgba(75,179,214,0.08)', borderBottom: '1px solid rgba(75,179,214,0.15)',
-      }}>
-        <span style={{ background: 'var(--blue)', color: '#fff', borderRadius: '6px', padding: '2px 9px', fontSize: '0.7rem', fontWeight: 800 }}>
+    <div style={{ borderRadius: '12px', border: '1px solid rgba(75,179,214,0.3)', background: 'rgba(255,255,255,0.95)', overflow: 'hidden', boxShadow: '0 2px 10px rgba(75,179,214,0.1)' }}>
+
+      {/* Header pose */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', background: 'rgba(75,179,214,0.08)', borderBottom: '1px solid rgba(75,179,214,0.15)' }}>
+        <span style={{ background: 'var(--blue)', color: '#fff', borderRadius: '6px', padding: '2px 9px', fontSize: '0.7rem', fontWeight: 800, flexShrink: 0 }}>
           Pose {index + 1}
         </span>
-        <input value={pose.nombre} onChange={e => onChange('nombre', e.target.value)}
-          placeholder="Nombre de la pose"
-          style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text)', outline: 'none' }} />
-        <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: '1rem', opacity: 0.7 }}>✕</button>
+        <input value={pose.nombre} onChange={e => onUpdateField('nombre', e.target.value)}
+          placeholder="Nombre de la pose (ej. T-Pose)"
+          style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.88rem', fontWeight: 700, color: 'var(--text)', outline: 'none' }} />
+
+        {/* Hold sec */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Mantener</span>
+          <input type="number" value={pose.hold_sec} min={0} max={15} step={0.5}
+            onChange={e => onUpdateField('hold_sec', parseFloat(e.target.value))}
+            style={{ width: '48px', padding: '3px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.82rem', textAlign: 'center', fontWeight: 700, background: 'white' }} />
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>s</span>
+        </div>
+
+        <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: '1rem', opacity: 0.6, flexShrink: 0 }}>✕</button>
       </div>
 
-      {/* Cuerpo: muñequito + sliders */}
-      <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', minHeight: '200px' }}>
+      {/* Cuerpo: muñequito + articulaciones */}
+      <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', minHeight: '220px' }}>
 
         {/* Muñequito */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          padding: '12px 8px', background: 'rgba(75,179,214,0.04)',
-          borderRight: '1px solid rgba(75,179,214,0.12)',
-        }}>
-          <MunequitoBody angulo={pose.angulo} nombreArticulacion={nombreArticulacion} />
-          <div style={{ fontWeight: 900, fontSize: '1.3rem', color: 'var(--blue)', marginTop: '4px' }}>{pose.angulo}°</div>
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-light)', textAlign: 'center', marginTop: '2px', maxWidth: '160px' }}>
-            {describeAngulo(pose.angulo, nombreArticulacion)}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 8px', background: 'rgba(75,179,214,0.03)', borderRight: '1px solid rgba(75,179,214,0.1)' }}>
+          <MunequitoMulti articulaciones={pose.articulaciones} />
+          {pose.articulaciones.length === 0 && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', textAlign: 'center', marginTop: '8px', opacity: 0.6 }}>
+              Agrega articulaciones →
+            </div>
+          )}
+        </div>
+
+        {/* Panel de articulaciones */}
+        <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+
+          {/* Lista de articulaciones activas */}
+          {pose.articulaciones.map(art => (
+            <ArticulacionSlider
+              key={art.id_articulacion}
+              art={art}
+              onChangeAngulo={v => onUpdateArt(art.id_articulacion, 'angulo', v)}
+              onChangeTol={v => onUpdateArt(art.id_articulacion, 'tolerancia', v)}
+              onRemove={() => onRemoveArt(art.id_articulacion)}
+            />
+          ))}
+
+          {/* Botón agregar articulación */}
+          {disponibles.length > 0 && (
+            <div>
+              <button
+                onClick={() => setShowSelector(!showSelector)}
+                style={{ width: '100%', padding: '8px', borderRadius: '9px', border: '1.5px dashed var(--blue)', background: 'transparent', color: 'var(--blue)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {showSelector ? '✕ Cerrar' : '+ Agregar articulación'}
+              </button>
+
+              {showSelector && (
+                <div style={{ marginTop: '8px', borderRadius: '10px', border: '1px solid var(--blue)', background: '#f8fcff', padding: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                  {loadingArts ? (
+                    <div style={{ fontSize: '0.78rem', opacity: 0.5, gridColumn: 'span 2' }}>Cargando...</div>
+                  ) : disponibles.map(a => (
+                    <button
+                      key={a.id_articulacion}
+                      onClick={() => { onAddArt(a); setShowSelector(false) }}
+                      style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)', background: 'white', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text)', textAlign: 'left', transition: '.15s' }}
+                    >
+                      {articulacionIcon(a.nombre_articulacion)} {a.nombre_articulacion}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {pose.articulaciones.length === 0 && !showSelector && disponibles.length === 0 && (
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', fontStyle: 'italic', padding: '8px 0' }}>
+              Todas las articulaciones ya están en esta pose
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Footer: validación simultánea */}
+      {pose.articulaciones.length > 1 && (
+        <div style={{ padding: '8px 16px', background: '#eef8d6', borderTop: '1px solid rgba(76,160,15,0.2)', fontSize: '0.72rem', color: '#4a7c0f', fontWeight: 600 }}>
+          ✅ La IA validará esta pose cuando las {pose.articulaciones.length} articulaciones estén en rango simultáneamente
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Slider por articulación ──────────────────────────────────────────────────
+function ArticulacionSlider({ art, onChangeAngulo, onChangeTol, onRemove }: {
+  art: PoseArticulacion
+  onChangeAngulo: (v: number) => void
+  onChangeTol: (v: number) => void
+  onRemove: () => void
+}) {
+  return (
+    <div style={{ borderRadius: '10px', border: '1px solid rgba(75,179,214,0.25)', background: 'white', overflow: 'hidden' }}>
+      {/* Nombre articulación */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 12px', background: 'rgba(75,179,214,0.06)', borderBottom: '1px solid rgba(75,179,214,0.12)' }}>
+        <span style={{ fontSize: '1rem' }}>{articulacionIcon(art.nombre_articulacion)}</span>
+        <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--text)', flex: 1 }}>{art.nombre_articulacion}</span>
+        <span style={{ fontWeight: 900, fontSize: '1rem', color: 'var(--blue)', minWidth: '42px', textAlign: 'right' }}>{art.angulo}°</span>
+        <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: '0.85rem', opacity: 0.6 }}>✕</button>
+      </div>
+
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Ángulo */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>Ángulo objetivo</label>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-light)' }}>{describeAngulo(art.angulo, art.nombre_articulacion)}</span>
+          </div>
+          <input type="range" min={0} max={180} step={5} value={art.angulo}
+            onChange={e => onChangeAngulo(parseInt(e.target.value))}
+            style={{ width: '100%', accentColor: 'var(--blue)', cursor: 'pointer' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--text-light)', marginTop: '2px' }}>
+            <span>0°</span><span>90°</span><span>180°</span>
           </div>
         </div>
 
-        {/* Sliders */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px 18px', justifyContent: 'center' }}>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <label style={labelStyle}>Ángulo objetivo</label>
-              <span style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--blue)' }}>{pose.angulo}°</span>
-            </div>
-            <input type="range" min={0} max={180} step={5} value={pose.angulo}
-              onChange={e => onChange('angulo', parseInt(e.target.value))}
-              style={{ width: '100%', accentColor: 'var(--blue)', height: '6px', cursor: 'pointer' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-light)', marginTop: '3px' }}>
-              <span>0° (doblado)</span><span>90°</span><span>180° (extendido)</span>
-            </div>
+        {/* Tolerancia */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>Tolerancia</label>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-light)' }}>±{art.tolerancia}° → {Math.max(0, art.angulo - art.tolerancia)}°–{Math.min(180, art.angulo + art.tolerancia)}°</span>
           </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <label style={labelStyle}>Tolerancia</label>
-              <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text)' }}>±{pose.tolerancia}°</span>
-            </div>
-            <input type="range" min={1} max={30} step={1} value={pose.tolerancia}
-              onChange={e => onChange('tolerancia', parseInt(e.target.value))}
-              style={{ width: '100%', accentColor: '#6c8fc7', height: '6px', cursor: 'pointer' }} />
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-light)', marginTop: '3px' }}>
-              Rango aceptado: {Math.max(0, pose.angulo - pose.tolerancia)}° – {Math.min(180, pose.angulo + pose.tolerancia)}°
-            </div>
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <label style={labelStyle}>Mantener en posición</label>
-              <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text)' }}>{pose.hold_sec}s</span>
-            </div>
-            <input type="range" min={0} max={10} step={0.5} value={pose.hold_sec}
-              onChange={e => onChange('hold_sec', parseFloat(e.target.value))}
-              style={{ width: '100%', accentColor: '#6c8fc7', height: '6px', cursor: 'pointer' }} />
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-light)', marginTop: '3px' }}>
-              {pose.hold_sec === 0 ? 'Sin tiempo mínimo' : `Paciente debe sostener ${pose.hold_sec}s en rango`}
-            </div>
-          </div>
-
+          <input type="range" min={1} max={30} step={1} value={art.tolerancia}
+            onChange={e => onChangeTol(parseInt(e.target.value))}
+            style={{ width: '100%', accentColor: '#6c8fc7', cursor: 'pointer' }} />
         </div>
       </div>
     </div>
@@ -382,400 +420,373 @@ function PoseCard({ pose, index, onChange, onRemove, nombreArticulacion }: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MUÑEQUITO CUERPO COMPLETO
+// MUÑEQUITO MULTI-ARTICULACIÓN
+// Muestra el cuerpo completo con todas las articulaciones activas coloreadas
 // ═══════════════════════════════════════════════════════════════════════════════
-function MunequitoBody({ angulo, nombreArticulacion }: { angulo: number; nombreArticulacion: string }) {
-  const n = nombreArticulacion.toLowerCase()
-  const isDer = n.includes('derecho') || n.includes('der')
-  const lado  = isDer ? 1 : -1
+function MunequitoMulti({ articulaciones }: { articulaciones: PoseArticulacion[] }) {
+  const get = (keyword: string) =>
+    articulaciones.find(a => a.nombre_articulacion.toLowerCase().includes(keyword))
 
-  // Constantes del cuerpo (coordenadas base del muñequito de palitos)
-  const CX   = 88   // centro X
-  const HEAD = { cx: CX, cy: 22, r: 13 }
+  const codoDer   = get('codo derecho')   ?? get('codo der')
+  const codoIzq   = get('codo izquierdo') ?? get('codo izq')
+  const hombroDer = get('hombro derecho') ?? get('hombro der')
+  const hombroIzq = get('hombro izquierdo') ?? get('hombro izq')
+  const caderaDer = get('cadera derecha') ?? get('cadera der')
+  const caderaIzq = get('cadera izquierda') ?? get('cadera izq')
+  const rodillaDer = get('rodilla derecha') ?? get('rodilla der')
+  const rodillaIzq = get('rodilla izquierda') ?? get('rodilla izq')
+  const tobilloDer = get('tobillo derecho') ?? get('tobillo der')
+  const tobilloIzq = get('tobillo izquierdo') ?? get('tobillo izq')
+  const tronco    = get('tronco')
+  const cuello    = get('cuello')
 
-  // Articulaciones base (sin movimiento)
-  const NECK   = { x: CX,      y: 36  }
-  const SHOLR  = { x: CX + 22, y: 48  }  // hombro derecho
-  const SHOLL  = { x: CX - 22, y: 48  }  // hombro izquierdo
-  const HIP    = { x: CX,      y: 105 }
-  const HIPR   = { x: CX + 14, y: 108 }  // cadera derecha
-  const HIPL   = { x: CX - 14, y: 108 }  // cadera izquierda
+  // Colores
+  const ACTIVE = '#378ADD'
+  const RED    = '#E24B4A'
+  const DARK   = '#185FA5'
+  const GRAY   = '#b0aea6'
+  const SKIN   = '#D8D6CC'
+  const W      = 3.5
+  const WG     = 2
 
-  // Articulaciones activas (calculadas según ángulo)
-  // Ángulo en radianes para rotar el segmento móvil
-  const deg2rad = (d: number) => (d * Math.PI) / 180
+  // Geometría base del cuerpo
+  const CX = 90
+  // Cabeza
+  const HCX = CX, HCY = 22
+  // Cuello
+  const NECK = { x: CX, y: 36 }
+  // Hombros
+  const SHR = { x: CX + 26, y: 50 }  // hombro derecho
+  const SHL = { x: CX - 26, y: 50 }  // hombro izquierdo
+  // Torso
+  const HIP  = { x: CX,     y: 112 }
+  const HIPR = { x: CX + 16, y: 115 }
+  const HIPL = { x: CX - 16, y: 115 }
 
-  // ── Codo ──────────────────────────────────────────────────────────────────
-  // Brazo: hombro → codo (fijo, apunta 30° hacia afuera-abajo)
-  const ELBOW = isDer
-    ? { x: SHOLR.x + 22, y: SHOLR.y + 42 }
-    : { x: SHOLL.x - 22, y: SHOLL.y + 42 }
-  // Antebrazo (codo → muñeca): 180° = extendido abajo, 0° = doblado arriba
-  const antLen = 38
-  const antAngle = isDer
-    ? (-90 + angulo)          // Der: 180→apunta abajo, 0→apunta arriba
-    : (-90 + angulo)
-  const WRIST = {
-    x: ELBOW.x + antLen * Math.cos(deg2rad(antAngle)) * lado,
-    y: ELBOW.y + antLen * Math.sin(deg2rad(angulo > 90 ? antAngle : antAngle)),
+  // ── Cálculo de segmentos activos ──────────────────────────────────────────
+  const d2r = (d: number) => d * Math.PI / 180
+
+  // CODO DERECHO: hombro → codo → muñeca
+  const elbowDerPos = { x: SHR.x + 24, y: SHR.y + 44 }
+  const wristDer = codoDer ? {
+    x: elbowDerPos.x + 40 * Math.sin(d2r(codoDer.angulo)) * 0.6,
+    y: elbowDerPos.y + 40 * Math.cos(d2r(180 - codoDer.angulo)),
+  } : { x: elbowDerPos.x + 10, y: elbowDerPos.y + 34 }
+
+  // CODO IZQUIERDO
+  const elbowIzqPos = { x: SHL.x - 24, y: SHL.y + 44 }
+  const wristIzq = codoIzq ? {
+    x: elbowIzqPos.x - 40 * Math.sin(d2r(codoIzq.angulo)) * 0.6,
+    y: elbowIzqPos.y + 40 * Math.cos(d2r(180 - codoIzq.angulo)),
+  } : { x: elbowIzqPos.x - 10, y: elbowIzqPos.y + 34 }
+
+  // HOMBRO DERECHO: ángulo = elevación del brazo (0=abajo, 180=arriba)
+  const armAngleDer = hombroDer ? -(hombroDer.angulo) + 90 : -80
+  const elbowHombroDer = {
+    x: SHR.x + 42 * Math.cos(d2r(armAngleDer)),
+    y: SHR.y - 42 * Math.sin(d2r(armAngleDer)),
   }
-  // Más directo: calcular la muñeca correctamente
-  // ref: ángulo 180 = antebrazo apunta abajo; ángulo 0 = apunta hacia arriba
-  const wristFinal = {
-    x: ELBOW.x + antLen * Math.sin(deg2rad(angulo)) * lado * 0.6,
-    y: ELBOW.y + antLen * Math.cos(deg2rad(180 - angulo)),
-  }
-
-  // ── Hombro ────────────────────────────────────────────────────────────────
-  // Brazo elevado: 0° = pegado al cuerpo, 180° = arriba del todo
-  const SHOL_ACT = isDer ? SHOLR : SHOLL
-  const armLen   = 40
-  // 0° = brazo abajo (apunta hacia cadera), 180° = brazo arriba
-  const armAngle = isDer ? -(angulo) + 90 : (angulo) - 90
-  const ELBOW_HOMBRO = {
-    x: SHOL_ACT.x + armLen * Math.cos(deg2rad(armAngle)) * lado,
-    y: SHOL_ACT.y - armLen * Math.sin(deg2rad(armAngle)) * (angulo > 90 ? 1 : 1),
-  }
-  // Forearm sigue la dirección del brazo
-  const WRIST_HOMBRO = {
-    x: ELBOW_HOMBRO.x + 30 * Math.cos(deg2rad(armAngle)) * lado,
-    y: ELBOW_HOMBRO.y - 30 * Math.sin(deg2rad(armAngle)),
-  }
-
-  // ── Cadera ────────────────────────────────────────────────────────────────
-  const HIP_ACT  = isDer ? HIPR : HIPL
-  const thighLen = 45
-  // 180° = pierna extendida abajo; 0° = pierna hacia arriba (flexión máxima)
-  const hipAngle = angulo - 90
-  const KNEE_CAD = {
-    x: HIP_ACT.x + thighLen * Math.sin(deg2rad(hipAngle)) * lado * 0.4,
-    y: HIP_ACT.y + thighLen * Math.cos(deg2rad(hipAngle - 10)) * (angulo > 90 ? 1 : -0.5),
-  }
-  const ANKLE_CAD = {
-    x: KNEE_CAD.x + 40 * Math.sin(deg2rad(10)) * lado * 0.3,
-    y: KNEE_CAD.y + 40,
+  const wristHombroDer = {
+    x: elbowHombroDer.x + 32 * Math.cos(d2r(armAngleDer)),
+    y: elbowHombroDer.y - 32 * Math.sin(d2r(armAngleDer)),
   }
 
-  // ── Rodilla ───────────────────────────────────────────────────────────────
-  const HIP_ROD   = isDer ? HIPR : HIPL
-  const thigh2Len = 44
-  const KNEE_ROD  = {
-    x: HIP_ROD.x + thigh2Len * Math.sin(deg2rad(8)) * lado * 0.5,
-    y: HIP_ROD.y + thigh2Len * 0.98,
+  // HOMBRO IZQUIERDO
+  const armAngleIzq = hombroIzq ? (hombroIzq.angulo) - 90 : 80
+  const elbowHombroIzq = {
+    x: SHL.x - 42 * Math.cos(d2r(armAngleIzq)),
+    y: SHL.y - 42 * Math.sin(d2r(armAngleIzq)),
   }
-  const shinLen  = 44
-  // 180° = tibia extendida (abajo); 0° = tibia muy doblada (hacia atrás)
-  const shinAngle = (180 - angulo)
-  const ANKLE_ROD = {
-    x: KNEE_ROD.x - shinLen * Math.sin(deg2rad(shinAngle)) * lado * 0.7,
-    y: KNEE_ROD.y + shinLen * Math.cos(deg2rad(shinAngle)) * (angulo > 90 ? 1 : 0.8),
+  const wristHombroIzq = {
+    x: elbowHombroIzq.x - 32 * Math.cos(d2r(armAngleIzq)),
+    y: elbowHombroIzq.y - 32 * Math.sin(d2r(armAngleIzq)),
   }
 
-  // ── Tobillo ───────────────────────────────────────────────────────────────
-  const HIP_TOB   = isDer ? HIPR : HIPL
-  const KNEE_TOB  = {
-    x: HIP_TOB.x + 4 * lado,
-    y: HIP_TOB.y + 44,
-  }
-  const ANKLE_TOB = {
-    x: KNEE_TOB.x + 2 * lado,
-    y: KNEE_TOB.y + 44,
-  }
-  // Pie: 90° = recto, <90 = plantar, >90 = dorsiflexión
-  const footLen   = 28
-  const footAngle = angulo - 90
-  const TOE = {
-    x: ANKLE_TOB.x + footLen * Math.cos(deg2rad(footAngle)) * lado,
-    y: ANKLE_TOB.y + footLen * Math.sin(deg2rad(footAngle)) * 0.5,
+  // Función rodilla
+  const calcRodilla = (hip: typeof HIPR, lado: 1 | -1, rodilla?: PoseArticulacion) => {
+    const knee = { x: hip.x + lado * 5, y: hip.y + 46 }
+    const ang  = rodilla ? (180 - rodilla.angulo) : 0
+    const ankle = {
+      x: knee.x - lado * 46 * Math.sin(d2r(ang)) * 0.7,
+      y: knee.y + 46 * Math.cos(d2r(ang)) * (rodilla && rodilla.angulo < 90 ? 0.7 : 1),
+    }
+    return { knee, ankle }
   }
 
-  // ── Cuello ────────────────────────────────────────────────────────────────
-  // 90° = cabeza recta; <90 = inclinada izquierda; >90 = inclinada derecha
-  const neckTilt = angulo - 90  // ángulo de inclinación lateral
-  const HEAD_CUELLO = {
-    cx: HEAD.cx + 20 * Math.sin(deg2rad(neckTilt)),
-    cy: HEAD.cy,
+  const { knee: kneeDer, ankle: ankleDer } = calcRodilla(HIPR, 1, rodillaDer)
+  const { knee: kneeIzq, ankle: ankleIzq } = calcRodilla(HIPL, -1, rodillaIzq)
+
+  // Función cadera
+  const calcCadera = (hip: typeof HIPR, lado: 1 | -1, cadera?: PoseArticulacion) => {
+    const ang   = cadera ? cadera.angulo - 90 : -85
+    const thigh = {
+      x: hip.x + 46 * Math.sin(d2r(ang)) * lado * 0.4,
+      y: hip.y + 46 * Math.cos(d2r(ang - 10)) * (cadera && cadera.angulo > 90 ? 1 : -0.5),
+    }
+    const shin = { x: thigh.x + lado * 3, y: thigh.y + 40 }
+    return { thigh, shin }
   }
 
-  // ── Tronco ────────────────────────────────────────────────────────────────
-  // 180° = tronco recto; <180 = inclinado hacia el lado activo
-  const trunkTilt = (180 - angulo) * 0.4 * lado
-  const HIP_TRUNK = { x: HIP.x + 10 * Math.sin(deg2rad(trunkTilt)), y: HIP.y }
+  const { thigh: thighDerC, shin: shinDerC } = calcCadera(HIPR, 1, caderaDer)
+  const { thigh: thighIzqC, shin: shinIzqC } = calcCadera(HIPL, -1, caderaIzq)
 
-  // Determinar qué articulación dibujar activa
-  const isCodo    = n.includes('codo')
-  const isHombro  = n.includes('hombro')
-  const isCadera  = n.includes('cadera')
-  const isRodilla = n.includes('rodilla')
-  const isTobillo = n.includes('tobillo')
-  const isTronco  = n.includes('tronco')
-  const isCuello  = n.includes('cuello')
+  // Función tobillo
+  const calcTobillo = (knee: {x:number,y:number}, lado: 1 | -1, tobillo?: PoseArticulacion) => {
+    const ankle = { x: knee.x + lado * 2, y: knee.y + 46 }
+    const footA = tobillo ? tobillo.angulo - 90 : 0
+    const toe   = {
+      x: ankle.x + 28 * Math.cos(d2r(footA)) * lado,
+      y: ankle.y + 28 * Math.sin(d2r(footA)) * 0.4,
+    }
+    return { ankle, toe }
+  }
 
-  const BLUE = '#378ADD'
-  const RED  = '#E24B4A'
-  const DARK = '#185FA5'
-  const GRAY = '#9a9893'
-  const SKIN = '#D3D1C7'
-  const W    = 3.5   // grosor segmento activo
-  const WG   = 2.5   // grosor segmento inactivo
+  const { ankle: ankleDerT, toe: toeDer } = calcTobillo(kneeDer, 1, tobilloDer)
+  const { ankle: ankleIzqT, toe: toeIzq } = calcTobillo(kneeIzq, -1, tobilloIzq)
+
+  // Cuello tilt
+  const neckTilt  = cuello ? cuello.angulo - 90 : 0
+  const headFinalX = HCX + 18 * Math.sin(d2r(neckTilt))
+
+  // Tronco
+  const trunkTilt = tronco ? (180 - tronco.angulo) * 0.4 : 0
+  const hipFinalX = HIP.x + 10 * Math.sin(d2r(trunkTilt))
+
+  // Helpers
+  const isActive = (a?: PoseArticulacion) => !!a
+  const segColor = (a?: PoseArticulacion) => isActive(a) ? ACTIVE : GRAY
+  const segW     = (a?: PoseArticulacion) => isActive(a) ? W : WG
+
+  // Brazo derecho: prioridad hombro > codo > inactivo
+  const useHombroDer = !!hombroDer
+  const useCodoDer   = !!codoDer && !hombroDer
+
+  // Brazo izquierdo
+  const useHombroIzq = !!hombroIzq
+  const useCodoIzq   = !!codoIzq && !hombroIzq
+
+  // Pierna derecha: prioridad cadera > rodilla > tobillo
+  const useCaderaDer  = !!caderaDer
+  const useRodillaDer = !!rodillaDer && !caderaDer
+  const useTobilloDer = !!tobilloDer && !caderaDer && !rodillaDer
+
+  // Pierna izquierda
+  const useCaderaIzq  = !!caderaIzq
+  const useRodillaIzq = !!rodillaIzq && !caderaIzq
+  const useTobilloIzq = !!tobilloIzq && !caderaIzq && !rodillaIzq
 
   return (
-    <svg width="176" height="260" viewBox="0 0 176 260" style={{ display: 'block' }}>
+    <svg width="180" height="280" viewBox="0 0 180 280" style={{ display: 'block' }}>
 
-      {/* ── CABEZA ── */}
-      {isCuello ? (
-        <circle cx={HEAD_CUELLO.cx} cy={HEAD_CUELLO.cy} r={HEAD.r} fill="none" stroke={RED} strokeWidth="2.5"/>
-      ) : (
-        <circle cx={HEAD.cx} cy={HEAD.cy} r={HEAD.r} fill="none" stroke={GRAY} strokeWidth="2"/>
-      )}
+      {/* CABEZA */}
+      <circle cx={headFinalX} cy={HCY} r={13} fill="none" stroke={cuello ? RED : GRAY} strokeWidth={cuello ? 2.5 : 2}/>
 
-      {/* ── CUELLO ── */}
-      {isCuello ? (
+      {/* CUELLO */}
+      <line x1={headFinalX} y1={HCY + 13} x2={NECK.x} y2={NECK.y} stroke={cuello ? RED : GRAY} strokeWidth={cuello ? 2.5 : 2} strokeLinecap="round"/>
+
+      {/* TORSO */}
+      <line x1={NECK.x} y1={NECK.y} x2={hipFinalX} y2={HIP.y} stroke={tronco ? RED : GRAY} strokeWidth={tronco ? 3 : 2.5} strokeLinecap="round"/>
+
+      {/* HOMBROS */}
+      <line x1={SHL.x} y1={SHL.y} x2={SHR.x} y2={SHR.y} stroke={GRAY} strokeWidth={2.5} strokeLinecap="round"/>
+
+      {/* CADERAS */}
+      <line x1={HIPL.x} y1={HIPL.y} x2={HIPR.x} y2={HIPR.y} stroke={GRAY} strokeWidth={2.5} strokeLinecap="round"/>
+
+      {/* ── BRAZO DERECHO ── */}
+      {useHombroDer ? (
+        // Hombro derecho activo: todo el brazo se eleva
         <>
-          <line x1={HEAD_CUELLO.cx} y1={HEAD_CUELLO.cy + HEAD.r} x2={NECK.x} y2={NECK.y} stroke={RED} strokeWidth="2.5" strokeLinecap="round"/>
-          {/* Arco */}
-          <CircleArc cx={NECK.x} cy={NECK.y} r={14} startDeg={-90 + neckTilt} endDeg={-90} color={BLUE} />
+          <line x1={SHR.x} y1={SHR.y} x2={elbowHombroDer.x} y2={elbowHombroDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={elbowHombroDer.x} y1={elbowHombroDer.y} x2={wristHombroDer.x} y2={wristHombroDer.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
+          <Dot cx={SHR.x} cy={SHR.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={elbowHombroDer.x} cy={elbowHombroDer.y} r={5} fill={SKIN} stroke={RED}/>
+          <Dot cx={wristHombroDer.x} cy={wristHombroDer.y} r={4} fill={SKIN} stroke={RED}/>
+        </>
+      ) : useCodoDer ? (
+        // Codo derecho activo: brazo fijo, antebrazo móvil
+        <>
+          <line x1={SHR.x} y1={SHR.y} x2={elbowDerPos.x} y2={elbowDerPos.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={elbowDerPos.x} y1={elbowDerPos.y} x2={wristDer.x} y2={wristDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <Dot cx={SHR.x} cy={SHR.y} r={5} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={elbowDerPos.x} cy={elbowDerPos.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={wristDer.x} cy={wristDer.y} r={4.5} fill={SKIN} stroke={RED}/>
         </>
       ) : (
-        <line x1={HEAD.cx} y1={HEAD.cy + HEAD.r} x2={NECK.x} y2={NECK.y} stroke={GRAY} strokeWidth="2" strokeLinecap="round"/>
+        // Brazo derecho inactivo
+        <>
+          <line x1={SHR.x} y1={SHR.y} x2={elbowDerPos.x} y2={elbowDerPos.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <line x1={elbowDerPos.x} y1={elbowDerPos.y} x2={wristDer.x} y2={wristDer.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <Dot cx={SHR.x} cy={SHR.y} r={4} fill={SKIN} stroke={GRAY}/>
+          <Dot cx={elbowDerPos.x} cy={elbowDerPos.y} r={4} fill={SKIN} stroke={GRAY}/>
+        </>
       )}
 
-      {/* ── TORSO ── */}
-      {isTronco ? (
+      {/* ── BRAZO IZQUIERDO ── */}
+      {useHombroIzq ? (
         <>
-          <line x1={NECK.x} y1={NECK.y} x2={HIP_TRUNK.x} y2={HIP_TRUNK.y} stroke={RED} strokeWidth="3" strokeLinecap="round"/>
-          <CircleArc cx={NECK.x} cy={NECK.y} r={16} startDeg={90} endDeg={90 + trunkTilt} color={BLUE} />
+          <line x1={SHL.x} y1={SHL.y} x2={elbowHombroIzq.x} y2={elbowHombroIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={elbowHombroIzq.x} y1={elbowHombroIzq.y} x2={wristHombroIzq.x} y2={wristHombroIzq.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
+          <Dot cx={SHL.x} cy={SHL.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={elbowHombroIzq.x} cy={elbowHombroIzq.y} r={5} fill={SKIN} stroke={RED}/>
+          <Dot cx={wristHombroIzq.x} cy={wristHombroIzq.y} r={4} fill={SKIN} stroke={RED}/>
+        </>
+      ) : useCodoIzq ? (
+        <>
+          <line x1={SHL.x} y1={SHL.y} x2={elbowIzqPos.x} y2={elbowIzqPos.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={elbowIzqPos.x} y1={elbowIzqPos.y} x2={wristIzq.x} y2={wristIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <Dot cx={SHL.x} cy={SHL.y} r={5} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={elbowIzqPos.x} cy={elbowIzqPos.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={wristIzq.x} cy={wristIzq.y} r={4.5} fill={SKIN} stroke={RED}/>
         </>
       ) : (
-        <line x1={NECK.x} y1={NECK.y} x2={HIP.x} y2={HIP.y} stroke={GRAY} strokeWidth="2.5" strokeLinecap="round"/>
-      )}
-
-      {/* ── HOMBROS ── */}
-      <line x1={SHOLL.x} y1={SHOLL.y} x2={SHOLR.x} y2={SHOLR.y} stroke={GRAY} strokeWidth="2.5" strokeLinecap="round"/>
-
-      {/* ── CADERA BAR ── */}
-      <line x1={HIPL.x} y1={HIPL.y} x2={HIPR.x} y2={HIPR.y} stroke={GRAY} strokeWidth="2.5" strokeLinecap="round"/>
-
-      {/* ── BRAZO INACTIVO (lado opuesto) ── */}
-      {(isCodo || isHombro) && (() => {
-        const shInact = isDer ? SHOLL : SHOLR
-        const elInact = isDer
-          ? { x: SHOLL.x - 22, y: SHOLL.y + 42 }
-          : { x: SHOLR.x + 22, y: SHOLR.y + 42 }
-        return (
-          <>
-            <line x1={shInact.x} y1={shInact.y} x2={elInact.x} y2={elInact.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-            <line x1={elInact.x} y1={elInact.y} x2={elInact.x + (isDer ? -10 : 10)} y2={elInact.y + 32} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-            <Dot cx={shInact.x} cy={shInact.y} r={4} fill={SKIN} stroke={GRAY}/>
-            <Dot cx={elInact.x} cy={elInact.y} r={4} fill={SKIN} stroke={GRAY}/>
-          </>
-        )
-      })()}
-
-      {/* ── PIERNA INACTIVA (lado opuesto) ── */}
-      {(isCadera || isRodilla || isTobillo) && (() => {
-        const hpInact  = isDer ? HIPL : HIPR
-        const knInact  = { x: hpInact.x - 3 * lado, y: hpInact.y + 44 }
-        const ankInact = { x: knInact.x - 2 * lado, y: knInact.y + 44 }
-        return (
-          <>
-            <line x1={hpInact.x} y1={hpInact.y} x2={knInact.x} y2={knInact.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-            <line x1={knInact.x} y1={knInact.y} x2={ankInact.x} y2={ankInact.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-            <Dot cx={hpInact.x} cy={hpInact.y} r={4} fill={SKIN} stroke={GRAY}/>
-            <Dot cx={knInact.x} cy={knInact.y} r={4} fill={SKIN} stroke={GRAY}/>
-          </>
-        )
-      })()}
-
-      {/* ── BRAZO ACTIVO — CODO ── */}
-      {isCodo && (
         <>
-          <CircleArc cx={ELBOW.x} cy={ELBOW.y} r={14} startDeg={isDer ? -60 : 240} endDeg={isDer ? -60 + angulo : 240 - angulo} color={BLUE} />
-          <line x1={SHOL_ACT.x} y1={SHOL_ACT.y} x2={ELBOW.x} y2={ELBOW.y} stroke={BLUE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={ELBOW.x} y1={ELBOW.y} x2={wristFinal.x} y2={wristFinal.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={SHOL_ACT.x} cy={SHOL_ACT.y} r={5} fill={SKIN} stroke={BLUE}/>
-          <Dot cx={ELBOW.x} cy={ELBOW.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={wristFinal.x} cy={wristFinal.y} r={4.5} fill={SKIN} stroke={RED}/>
+          <line x1={SHL.x} y1={SHL.y} x2={elbowIzqPos.x} y2={elbowIzqPos.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <line x1={elbowIzqPos.x} y1={elbowIzqPos.y} x2={wristIzq.x} y2={wristIzq.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <Dot cx={SHL.x} cy={SHL.y} r={4} fill={SKIN} stroke={GRAY}/>
+          <Dot cx={elbowIzqPos.x} cy={elbowIzqPos.y} r={4} fill={SKIN} stroke={GRAY}/>
         </>
       )}
 
-      {/* ── BRAZO ACTIVO — HOMBRO ── */}
-      {isHombro && (
+      {/* ── PIERNA DERECHA ── */}
+      {useCaderaDer ? (
         <>
-          <CircleArc cx={SHOL_ACT.x} cy={SHOL_ACT.y} r={14} startDeg={isDer ? 90 : 90} endDeg={isDer ? 90 - angulo : 90 + angulo} color={BLUE} />
-          <line x1={SHOL_ACT.x} y1={SHOL_ACT.y} x2={ELBOW_HOMBRO.x} y2={ELBOW_HOMBRO.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={ELBOW_HOMBRO.x} y1={ELBOW_HOMBRO.y} x2={WRIST_HOMBRO.x} y2={WRIST_HOMBRO.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
-          <Dot cx={SHOL_ACT.x} cy={SHOL_ACT.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={ELBOW_HOMBRO.x} cy={ELBOW_HOMBRO.y} r={5} fill={SKIN} stroke={RED}/>
-          <Dot cx={WRIST_HOMBRO.x} cy={WRIST_HOMBRO.y} r={4} fill={SKIN} stroke={RED}/>
+          <line x1={HIPR.x} y1={HIPR.y} x2={thighDerC.x} y2={thighDerC.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={thighDerC.x} y1={thighDerC.y} x2={shinDerC.x} y2={shinDerC.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
+          <Dot cx={HIPR.x} cy={HIPR.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={thighDerC.x} cy={thighDerC.y} r={5} fill={SKIN} stroke={RED}/>
+          <Dot cx={shinDerC.x} cy={shinDerC.y} r={4} fill={SKIN} stroke={RED}/>
+        </>
+      ) : useRodillaDer ? (
+        <>
+          <line x1={HIPR.x} y1={HIPR.y} x2={kneeDer.x} y2={kneeDer.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={kneeDer.x} y1={kneeDer.y} x2={ankleDer.x} y2={ankleDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <Dot cx={HIPR.x} cy={HIPR.y} r={5} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={kneeDer.x} cy={kneeDer.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={ankleDer.x} cy={ankleDer.y} r={4.5} fill={SKIN} stroke={RED}/>
+        </>
+      ) : useTobilloDer ? (
+        <>
+          <line x1={HIPR.x} y1={HIPR.y} x2={kneeDer.x} y2={kneeDer.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={kneeDer.x} y1={kneeDer.y} x2={ankleDerT.x} y2={ankleDerT.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={ankleDerT.x} y1={ankleDerT.y} x2={toeDer.x} y2={toeDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <Dot cx={HIPR.x} cy={HIPR.y} r={4} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={kneeDer.x} cy={kneeDer.y} r={5} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={ankleDerT.x} cy={ankleDerT.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={toeDer.x} cy={toeDer.y} r={4} fill={SKIN} stroke={RED}/>
+        </>
+      ) : (
+        <>
+          <line x1={HIPR.x} y1={HIPR.y} x2={kneeDer.x} y2={kneeDer.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <line x1={kneeDer.x} y1={kneeDer.y} x2={ankleDer.x} y2={ankleDer.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <Dot cx={HIPR.x} cy={HIPR.y} r={4} fill={SKIN} stroke={GRAY}/>
+          <Dot cx={kneeDer.x} cy={kneeDer.y} r={4} fill={SKIN} stroke={GRAY}/>
         </>
       )}
 
-      {/* ── PIERNA ACTIVA — CADERA ── */}
-      {isCadera && (
+      {/* ── PIERNA IZQUIERDA ── */}
+      {useCaderaIzq ? (
         <>
-          <CircleArc cx={HIP_ACT.x} cy={HIP_ACT.y} r={14} startDeg={90} endDeg={90 - hipAngle * lado} color={BLUE} />
-          <line x1={HIP_ACT.x} y1={HIP_ACT.y} x2={KNEE_CAD.x} y2={KNEE_CAD.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={KNEE_CAD.x} y1={KNEE_CAD.y} x2={ANKLE_CAD.x} y2={ANKLE_CAD.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
-          <Dot cx={HIP_ACT.x} cy={HIP_ACT.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={KNEE_CAD.x} cy={KNEE_CAD.y} r={5} fill={SKIN} stroke={RED}/>
-          <Dot cx={ANKLE_CAD.x} cy={ANKLE_CAD.y} r={4} fill={SKIN} stroke={RED}/>
+          <line x1={HIPL.x} y1={HIPL.y} x2={thighIzqC.x} y2={thighIzqC.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={thighIzqC.x} y1={thighIzqC.y} x2={shinIzqC.x} y2={shinIzqC.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
+          <Dot cx={HIPL.x} cy={HIPL.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={thighIzqC.x} cy={thighIzqC.y} r={5} fill={SKIN} stroke={RED}/>
+          <Dot cx={shinIzqC.x} cy={shinIzqC.y} r={4} fill={SKIN} stroke={RED}/>
         </>
-      )}
-
-      {/* ── PIERNA ACTIVA — RODILLA ── */}
-      {isRodilla && (
+      ) : useRodillaIzq ? (
         <>
-          <CircleArc cx={KNEE_ROD.x} cy={KNEE_ROD.y} r={14} startDeg={isDer ? -100 : 280} endDeg={isDer ? -100 + (180 - angulo) : 280 - (180 - angulo)} color={BLUE} />
-          <line x1={HIP_ROD.x} y1={HIP_ROD.y} x2={KNEE_ROD.x} y2={KNEE_ROD.y} stroke={BLUE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={KNEE_ROD.x} y1={KNEE_ROD.y} x2={ANKLE_ROD.x} y2={ANKLE_ROD.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={HIP_ROD.x} cy={HIP_ROD.y} r={5} fill={SKIN} stroke={BLUE}/>
-          <Dot cx={KNEE_ROD.x} cy={KNEE_ROD.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={ANKLE_ROD.x} cy={ANKLE_ROD.y} r={4.5} fill={SKIN} stroke={RED}/>
+          <line x1={HIPL.x} y1={HIPL.y} x2={kneeIzq.x} y2={kneeIzq.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={kneeIzq.x} y1={kneeIzq.y} x2={ankleIzq.x} y2={ankleIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <Dot cx={HIPL.x} cy={HIPL.y} r={5} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={kneeIzq.x} cy={kneeIzq.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={ankleIzq.x} cy={ankleIzq.y} r={4.5} fill={SKIN} stroke={RED}/>
         </>
-      )}
-
-      {/* ── PIERNA ACTIVA — TOBILLO ── */}
-      {isTobillo && (
+      ) : useTobilloIzq ? (
         <>
-          <line x1={HIP_TOB.x} y1={HIP_TOB.y} x2={KNEE_TOB.x} y2={KNEE_TOB.y} stroke={BLUE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={KNEE_TOB.x} y1={KNEE_TOB.y} x2={ANKLE_TOB.x} y2={ANKLE_TOB.y} stroke={BLUE} strokeWidth={W} strokeLinecap="round"/>
-          <CircleArc cx={ANKLE_TOB.x} cy={ANKLE_TOB.y} r={13} startDeg={0} endDeg={-footAngle * lado} color={BLUE} />
-          <line x1={ANKLE_TOB.x} y1={ANKLE_TOB.y} x2={TOE.x} y2={TOE.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={HIP_TOB.x} cy={HIP_TOB.y} r={4} fill={SKIN} stroke={BLUE}/>
-          <Dot cx={KNEE_TOB.x} cy={KNEE_TOB.y} r={5} fill={SKIN} stroke={BLUE}/>
-          <Dot cx={ANKLE_TOB.x} cy={ANKLE_TOB.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={TOE.x} cy={TOE.y} r={4} fill={SKIN} stroke={RED}/>
+          <line x1={HIPL.x} y1={HIPL.y} x2={kneeIzq.x} y2={kneeIzq.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={kneeIzq.x} y1={kneeIzq.y} x2={ankleIzqT.x} y2={ankleIzqT.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
+          <line x1={ankleIzqT.x} y1={ankleIzqT.y} x2={toeIzq.x} y2={toeIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
+          <Dot cx={HIPL.x} cy={HIPL.y} r={4} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={kneeIzq.x} cy={kneeIzq.y} r={5} fill={SKIN} stroke={ACTIVE}/>
+          <Dot cx={ankleIzqT.x} cy={ankleIzqT.y} r={7} fill={DARK} stroke="white"/>
+          <Dot cx={toeIzq.x} cy={toeIzq.y} r={4} fill={SKIN} stroke={RED}/>
         </>
-      )}
-
-      {/* ── Brazos inactivos cuando la articulación es de pierna ── */}
-      {(isCadera || isRodilla || isTobillo || isTronco || isCuello) && (
+      ) : (
         <>
-          {[SHOLL, SHOLR].map((sh, i) => {
-            const el = { x: sh.x + (i === 1 ? 18 : -18), y: sh.y + 42 }
-            const wr = { x: el.x + (i === 1 ? 8 : -8),  y: el.y + 30 }
-            return (
-              <g key={i}>
-                <line x1={sh.x} y1={sh.y} x2={el.x} y2={el.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-                <line x1={el.x} y1={el.y} x2={wr.x} y2={wr.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-                <Dot cx={sh.x} cy={sh.y} r={4} fill={SKIN} stroke={GRAY}/>
-                <Dot cx={el.x} cy={el.y} r={4} fill={SKIN} stroke={GRAY}/>
-              </g>
-            )
-          })}
-        </>
-      )}
-
-      {/* ── Piernas inactivas cuando la articulación es de brazo/cuello/tronco ── */}
-      {(isCodo || isHombro || isTronco || isCuello) && (
-        <>
-          {[HIPL, HIPR].map((hp, i) => {
-            const kn  = { x: hp.x + (i === 1 ? 4 : -4), y: hp.y + 44 }
-            const ank = { x: kn.x  + (i === 1 ? 3 : -3), y: kn.y  + 44 }
-            return (
-              <g key={i}>
-                <line x1={hp.x} y1={hp.y} x2={kn.x} y2={kn.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-                <line x1={kn.x} y1={kn.y} x2={ank.x} y2={ank.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-                <Dot cx={hp.x} cy={hp.y} r={4} fill={SKIN} stroke={GRAY}/>
-                <Dot cx={kn.x} cy={kn.y} r={4} fill={SKIN} stroke={GRAY}/>
-              </g>
-            )
-          })}
+          <line x1={HIPL.x} y1={HIPL.y} x2={kneeIzq.x} y2={kneeIzq.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <line x1={kneeIzq.x} y1={kneeIzq.y} x2={ankleIzq.x} y2={ankleIzq.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
+          <Dot cx={HIPL.x} cy={HIPL.y} r={4} fill={SKIN} stroke={GRAY}/>
+          <Dot cx={kneeIzq.x} cy={kneeIzq.y} r={4} fill={SKIN} stroke={GRAY}/>
         </>
       )}
 
       {/* Leyenda */}
-      <g>
-        <line x1="4" y1="250" x2="18" y2="250" stroke={BLUE} strokeWidth="2.5" strokeLinecap="round"/>
-        <text x="22" y="254" fontSize="9" fill={BLUE} fontFamily="sans-serif">fijo</text>
-        <line x1="46" y1="250" x2="60" y2="250" stroke={RED} strokeWidth="2.5" strokeLinecap="round"/>
-        <text x="64" y="254" fontSize="9" fill={RED} fontFamily="sans-serif">móvil</text>
-        <circle cx="102" cy="250" r="4" fill={DARK}/>
-        <text x="109" y="254" fontSize="9" fill={DARK} fontFamily="sans-serif">articulación</text>
-      </g>
+      <line x1="4" y1="270" x2="16" y2="270" stroke={ACTIVE} strokeWidth="2.5" strokeLinecap="round"/>
+      <text x="19" y="274" fontSize="8" fill={ACTIVE} fontFamily="sans-serif">fijo</text>
+      <line x1="42" y1="270" x2="54" y2="270" stroke={RED} strokeWidth="2.5" strokeLinecap="round"/>
+      <text x="57" y="274" fontSize="8" fill={RED} fontFamily="sans-serif">móvil</text>
+      <circle cx="96" cy="270" r="3.5" fill={DARK}/>
+      <text x="102" y="274" fontSize="8" fill={DARK} fontFamily="sans-serif">articulación</text>
     </svg>
   )
 }
 
-// ─── Sub-componentes SVG helpers ──────────────────────────────────────────────
+// ─── Helpers SVG ──────────────────────────────────────────────────────────────
 function Dot({ cx, cy, r, fill, stroke }: { cx: number; cy: number; r: number; fill: string; stroke: string }) {
   return <circle cx={cx} cy={cy} r={r} fill={fill} stroke={stroke} strokeWidth="1.5"/>
 }
 
-function CircleArc({ cx, cy, r, startDeg, endDeg, color }: {
-  cx: number; cy: number; r: number; startDeg: number; endDeg: number; color: string
-}) {
-  const deg2rad = (d: number) => (d * Math.PI) / 180
-  const x1 = cx + r * Math.cos(deg2rad(startDeg))
-  const y1 = cy + r * Math.sin(deg2rad(startDeg))
-  const x2 = cx + r * Math.cos(deg2rad(endDeg))
-  const y2 = cy + r * Math.sin(deg2rad(endDeg))
-  const diff = Math.abs(endDeg - startDeg)
-  const large = diff > 180 ? 1 : 0
-  const sweep = endDeg > startDeg ? 1 : 0
-  if (diff < 1) return null
-  return (
-    <path
-      d={`M ${x1} ${y1} A ${r} ${r} 0 ${large} ${sweep} ${x2} ${y2}`}
-      fill="none" stroke={color} strokeWidth="5" strokeLinecap="round" opacity="0.35"
-    />
-  )
+function articulacionIcon(nombre: string): string {
+  const n = nombre.toLowerCase()
+  if (n.includes('codo'))    return '💪'
+  if (n.includes('hombro'))  return '🦾'
+  if (n.includes('rodilla')) return '🦵'
+  if (n.includes('cadera'))  return '🏃'
+  if (n.includes('tobillo')) return '🦶'
+  if (n.includes('tronco'))  return '🧍'
+  if (n.includes('cuello'))  return '🙆'
+  return '⚙️'
 }
 
-// ─── Descripción textual del ángulo ──────────────────────────────────────────
 function describeAngulo(angulo: number, art: string): string {
   const n = art.toLowerCase()
   if (n.includes('codo')) {
-    if (angulo >= 160) return 'Brazo extendido'
-    if (angulo >= 120) return 'Extensión moderada'
-    if (angulo >= 80)  return 'Flexión media (90°)'
-    if (angulo >= 40)  return 'Flexión pronunciada'
-    return 'Codo muy flexionado'
+    if (angulo >= 160) return 'Extendido'
+    if (angulo >= 110) return 'Casi extendido'
+    if (angulo >= 70)  return 'Flexión 90°'
+    if (angulo >= 30)  return 'Muy flexionado'
+    return 'Máxima flexión'
   }
   if (n.includes('hombro')) {
-    if (angulo <= 20)  return 'Brazo pegado al cuerpo'
-    if (angulo <= 60)  return 'Elevación baja'
-    if (angulo <= 100) return 'Brazo al frente / lado'
+    if (angulo <= 20)  return 'Brazo al costado'
+    if (angulo <= 70)  return 'Elevación baja'
+    if (angulo <= 110) return 'Horizontal (T)'
     if (angulo <= 150) return 'Elevación alta'
-    return 'Brazo por encima de la cabeza'
-  }
-  if (n.includes('cadera')) {
-    if (angulo >= 160) return 'Pierna extendida (de pie)'
-    if (angulo >= 120) return 'Flexión ligera'
-    if (angulo >= 80)  return 'Flexión media (sentado)'
-    if (angulo >= 40)  return 'Flexión profunda'
-    return 'Máxima flexión de cadera'
+    return 'Brazo sobre cabeza'
   }
   if (n.includes('rodilla')) {
-    if (angulo >= 160) return 'Rodilla extendida'
-    if (angulo >= 120) return 'Flexión ligera'
-    if (angulo >= 80)  return 'Flexión media (90°)'
-    if (angulo >= 40)  return 'Flexión profunda'
-    return 'Rodilla muy flexionada'
+    if (angulo >= 160) return 'Extendida'
+    if (angulo >= 110) return 'Flexión leve'
+    if (angulo >= 70)  return 'Flexión 90°'
+    if (angulo >= 30)  return 'Flexión profunda'
+    return 'Máxima flexión'
+  }
+  if (n.includes('cadera')) {
+    if (angulo >= 160) return 'Pierna extendida'
+    if (angulo >= 110) return 'Flexión ligera'
+    if (angulo >= 70)  return 'Sentado (90°)'
+    if (angulo >= 30)  return 'Flexión profunda'
+    return 'Máxima flexión'
   }
   if (n.includes('tobillo')) {
-    if (angulo >= 110) return 'Dorsiflexión (punta arriba)'
-    if (angulo >= 85)  return 'Posición neutra'
-    if (angulo >= 60)  return 'Flexión plantar leve'
-    return 'Flexión plantar máxima'
+    if (angulo >= 110) return 'Dorsiflexión'
+    if (angulo >= 80)  return 'Neutro'
+    if (angulo >= 50)  return 'Flexión plantar'
+    return 'Punta de pie'
   }
-  if (n.includes('tronco')) {
-    if (angulo >= 160) return 'Tronco erguido'
-    if (angulo >= 120) return 'Inclinación leve'
-    if (angulo >= 80)  return 'Inclinación moderada'
-    return 'Inclinación lateral máxima'
-  }
-  if (n.includes('cuello')) {
-    if (angulo >= 110) return 'Inclinación derecha'
-    if (angulo >= 80)  return 'Cabeza recta (neutro)'
-    if (angulo >= 50)  return 'Inclinación izquierda'
-    return 'Inclinación lateral máxima'
-  }
-  if (angulo <= 30)  return 'Posición cerrada'
-  if (angulo <= 90)  return 'Ángulo agudo'
-  if (angulo <= 150) return 'Ángulo obtuso'
-  return 'Posición extendida'
+  if (n.includes('tronco'))  return angulo >= 150 ? 'Erguido' : angulo >= 100 ? 'Inclinación leve' : 'Inclinación lateral'
+  if (n.includes('cuello'))  return angulo >= 110 ? 'Inc. derecha' : angulo >= 70 ? 'Neutro' : 'Inc. izquierda'
+  return `${angulo}°`
 }
 
 // ─── Estilos ──────────────────────────────────────────────────────────────────

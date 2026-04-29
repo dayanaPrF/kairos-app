@@ -384,6 +384,8 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
             <div className="dash-card">
               <div className="dash-card-title">
                 📅 Agenda de hoy
+                {/* Este ya usa navigate('agenda'), asegúrate que el componente padre 
+                    mapee 'agenda' hacia FisioSectionAgenda */}
                 <NavLinkBtn label="Ver agenda completa" onClick={() => navigate('agenda')} />
               </div>
 
@@ -442,12 +444,40 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
             />
 
             {/* Resumen semanal */}
+
             <div className="dash-card">
               <div className="dash-card-title">
                 📆 Esta semana
-                <NavLinkBtn label="Ver agenda" onClick={() => navigate('agenda')} />
+                <NavLinkBtn label="Ver agenda" onClick={() => setShowMiniAgenda(true)} />
               </div>
               <SemanaSummary semana={semana} />
+              
+              {/* Ventana chiquita de citas (Mini Agenda) */}
+              {showMiniAgenda && (
+                <div style={{
+                  position: 'absolute', zIndex: 100, background: '#fff',
+                  border: '1px solid var(--border)', borderRadius: '12px',
+                  padding: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+                  width: '280px', right: '20px', top: '60px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                    <strong style={{ fontSize: '0.85rem' }}>Próximas citas</strong>
+                    <button onClick={() => setShowMiniAgenda(false)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}>×</button>
+                  </div>
+                  
+                  {semana.filter(s => s.citas > 0).length === 0 ? (
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>No hay citas programadas.</p>
+                  ) : (
+                    <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                      {semana.map(dia => dia.citas > 0 && (
+                        <div key={dia.fecha} style={{ fontSize: '0.75rem', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
+                          <strong>{dia.dia}:</strong> {dia.citas} cita(s)
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
           </div>
