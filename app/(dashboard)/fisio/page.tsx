@@ -179,7 +179,9 @@ export default function FisioDashPage() {
         </header>
 
         <div className="dash-content">
-          {activeSection === 'home' && <FisioSectionHome />}
+          {activeSection === 'home' && (
+            <FisioSectionHome onNavigate={(section) => setActiveSection(section as Section)} />
+          )}
           {activeSection === 'pacientes' && <FisioSectionPacientes />}
           {activeSection === 'agenda' && <FisioSectionAgenda />}
           {activeSection === 'rutinas' && <FisioSectionRutinas />}

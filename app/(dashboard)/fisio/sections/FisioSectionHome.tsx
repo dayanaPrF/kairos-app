@@ -301,7 +301,7 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
   }, [refresh])
 
   const handleContactar = useCallback((pac: PacienteInactivo) => {
-    navigate('chat', { id_paciente: pac.id_paciente })
+    navigate('mensajes', { id_paciente: pac.id_paciente })
   }, [navigate])
 
   const hoy         = new Date()
@@ -505,7 +505,7 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
             },
             { 
               icon: '💬', label: 'Mensajes', sub: 'Chat con pacientes',   
-              section: 'notificaciones', color: '#a55eea' 
+              section: 'mensajes', color: '#a55eea' 
             },
           ].map(({ icon, label, sub, section, color }) => (
             <QuickAccessCard
