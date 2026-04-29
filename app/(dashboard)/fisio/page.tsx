@@ -22,12 +22,15 @@ export default function FisioDashPage() {
   const [activeSection, setActiveSection] = useState<Section>('home')
   const [notifCount, setNotifCount] = useState(0)
   const [unreadMessages, setUnreadMessages] = useState(0)
+  const [userId, setUserId] = useState<string | null>(null)
 
-  const refreshUnreadMessages = useCallback(async (userId: string) => {
+  // Función para contar mensajes no leídos
+  const refreshUnreadMessages = useCallback(async (uid: string) => {
+    // Buscamos chats donde participa este fisio
     const { data: chats } = await supabase
       .from('chat')
       .select('id_chat')
-      .eq('id_fisioterapeuta', userId)
+      .eq('id_fisioterapeuta', uid)
       .is('deleted_at', null)
 
     if (!chats?.length) {
@@ -36,25 +39,27 @@ export default function FisioDashPage() {
     }
 
     const chatIds = chats.map(c => c.id_chat)
+    
+    // Contamos mensajes donde leido = false y el emisor NO es el fisio
     const { count } = await supabase
       .from('mensaje')
       .select('id_mensaje', { count: 'exact', head: true })
       .in('id_chat', chatIds)
       .eq('leido', false)
-      .neq('id_perfil_emisor', userId)
+      .neq('id_perfil_emisor', uid)
       .is('deleted_at', null)
 
     setUnreadMessages(count ?? 0)
   }, [])
 
-  const refreshNotifCount = useCallback(async (userId: string) => {
+  const refreshNotifCount = useCallback(async (uid: string) => {
     const { data } = await supabase
       .from('notificacion')
-      .select('id_notificacion')
-      .eq('id_perfil', userId)
+      .select('id_notificacion', { count: 'exact', head: true })
+      .eq('id_perfil', uid)
       .is('deleted_at', null)
       .not('estado', 'ilike', 'leida')
-    setNotifCount(data?.length ?? 0)
+    setNotifCount(data ? data.length : 0)
   }, [])
 
   useEffect(() => {
@@ -63,21 +68,35 @@ export default function FisioDashPage() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      setUserId(user.id)
 
-      // Cargar datos iniciales
-      const { data: perfil } = await supabase.from('perfil').select('nombre').eq('id_perfil', user.id).maybeSingle()
+      const { data: perfil } = await supabase
+        .from('perfil')
+        .select('nombre')
+        .eq('id_perfil', user.id)
+        .maybeSingle()
       if (perfil?.nombre) setUserName(perfil.nombre)
       
       refreshNotifCount(user.id)
       refreshUnreadMessages(user.id)
 
-      // REALTIME GLOBAL: Escucha cambios en mensajes y notificaciones para los contadores
+      // ESCUCHA REALTIME DINÁMICA
+      // Escuchamos INSERT (mensajes nuevos) y UPDATE (cuando se marcan como leídos)
       globalChannel = supabase
-        .channel('global-updates')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'mensaje' }, () => {
+        .channel('db-changes')
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'mensaje' 
+        }, () => {
+          // Si algo cambia en la tabla mensajes, recalculamos el contador
           refreshUnreadMessages(user.id)
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'notificacion' }, () => {
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'notificacion' 
+        }, () => {
           refreshNotifCount(user.id)
         })
         .subscribe()
@@ -106,16 +125,29 @@ export default function FisioDashPage() {
     <div className="dash-root">
       <aside className="dash-sidebar">
         <div className="dash-sidebar-brand">
-          <div className="dash-logo"><Image src="/logo_kairos.png" alt="Logo" width={70} height={70} priority /></div>
+          <div className="dash-logo">
+            <Image src="/logo_kairos.png" alt="Logo" width={70} height={70} priority />
+          </div>
           <div className="dash-brand-tag">Panel Fisioterapeuta</div>
         </div>
         <nav className="dash-sidebar-nav">
           {navItems.map(({ key, icon, label }) => (
-            <button key={key} className={`dash-nav-item ${activeSection === key ? 'active' : ''}`} onClick={() => setActiveSection(key)}>
+            <button 
+              key={key} 
+              className={`dash-nav-item ${activeSection === key ? 'active' : ''}`} 
+              onClick={() => setActiveSection(key)}
+            >
               <span className="dash-nav-icon">{icon}</span>
               {label}
-              {key === 'notificaciones' && notifCount > 0 && <span className="sidebar-badge">{notifCount}</span>}
-              {key === 'mensajes' && unreadMessages > 0 && <span className="sidebar-badge" style={{ background: '#1A73E8' }}>{unreadMessages}</span>}
+              {/* Badge en el menú lateral */}
+              {key === 'notificaciones' && notifCount > 0 && (
+                <span className="sidebar-badge">{notifCount}</span>
+              )}
+              {key === 'mensajes' && unreadMessages > 0 && (
+                <span className="sidebar-badge" style={{ background: '#1A73E8' }}>
+                  {unreadMessages}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -128,31 +160,72 @@ export default function FisioDashPage() {
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
           <div className="dash-topbar-actions">
+            {/* Botón superior Notificaciones */}
             <button className="dash-t-btn" onClick={() => setActiveSection('notificaciones')}>
-              🔔 {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
+              🔔 Notificaciones
+              {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
             </button>
+
+            {/* Botón superior Mensajes */}
             <button className="dash-t-btn primary" onClick={() => setActiveSection('mensajes')}>
-              💬 {unreadMessages > 0 && <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>{unreadMessages}</span>}
+              💬 Mensajes
+              {unreadMessages > 0 && (
+                <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>
+                  {unreadMessages}
+                </span>
+              )}
             </button>
-            <Link href="/fisio/perfil" className="dash-s-avatar">{userName[0]}</Link>
+
+            <Link href="/fisio/perfil" className="dash-avatar-link">
+              <button className="dash-s-avatar">{userName[0]}</button>
+            </Link>
             <div className="dash-s-info">
               <div className="dash-s-name">{userName}</div>
               <div className="dash-s-role">Fisioterapeuta</div>
             </div>
           </div>
         </header>
+
         <div className="dash-content">
           {activeSection === 'home' && <FisioSectionHome />}
           {activeSection === 'pacientes' && <FisioSectionPacientes />}
+          {activeSection === 'agenda' && <FisioSectionAgenda />}
+          {activeSection === 'rutinas' && <FisioSectionRutinas />}
           {activeSection === 'mensajes' && <FisioSectionBandeja />}
-          {activeSection === 'notificaciones' && <FisioSectionNotificaciones onLeidas={() => {}} />}
-          {/* ... resto de secciones ... */}
+          {activeSection === 'notificaciones' && (
+            <FisioSectionNotificaciones onLeidas={() => userId && refreshNotifCount(userId)} />
+          )}
+          {activeSection === 'clinica' && <FisioSectionClinica />}
+          {activeSection === 'reportes' && <FisioSectionReportes />}
         </div>
       </div>
       
       <style jsx>{`
-        .sidebar-badge { margin-left: auto; background: #E74C3C; color: #fff; border-radius: 12px; padding: 1px 7px; font-size: 0.7rem; font-weight: 700; }
-        .topbar-badge { position: absolute; top: -5px; right: -5px; background: #E74C3C; color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 0.65rem; font-weight: 700; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; }
+        .sidebar-badge { 
+          margin-left: auto; 
+          background: #E74C3C; 
+          color: #fff; 
+          border-radius: 12px; 
+          padding: 1px 8px; 
+          font-size: 0.7rem; 
+          font-weight: 700; 
+        }
+        .topbar-badge { 
+          position: absolute; 
+          top: -5px; 
+          right: -5px; 
+          background: #E74C3C; 
+          color: #fff; 
+          border-radius: 50%; 
+          width: 18px; 
+          height: 18px; 
+          font-size: 0.65rem; 
+          font-weight: 700; 
+          display: flex; 
+          align-items: center; 
+          justify-content: center; 
+          border: 2px solid #fff; 
+        }
       `}</style>
     </div>
   )
