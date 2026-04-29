@@ -24,32 +24,27 @@ export default function FisioDashPage() {
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [userId, setUserId] = useState<string | null>(null)
 
-  // 1. Refrescar Mensajes No Leídos
+  // 1. Refrescar Mensajes No Leídos (Versión Optimizada y Directa)
   const refreshUnreadMessages = useCallback(async (uid: string) => {
-    const { data: chats } = await supabase
-      .from('chat')
-      .select('id_chat')
-      .eq('id_fisioterapeuta', uid)
-      .is('deleted_at', null)
-
-    if (!chats?.length) {
-      setUnreadMessages(0)
-      return
-    }
-
-    const chatIds = chats.map(c => c.id_chat)
-    const { count } = await supabase
+    // Contamos directamente en la tabla mensaje. 
+    // Filtramos mensajes donde el receptor es el usuario actual (vía el id_chat vinculado al fisio)
+    const { count, error } = await supabase
       .from('mensaje')
-      .select('id_mensaje', { count: 'exact', head: true })
-      .in('id_chat', chatIds)
-      .eq('leido', false)
-      .neq('id_perfil_emisor', uid)
+      .select(`
+        id_mensaje,
+        chat!inner(id_fisioterapeuta)
+      `, { count: 'exact', head: true })
+      .eq('chat.id_fisioterapeuta', uid) // Solo mensajes de mis chats
+      .eq('leido', false)               // Que no estén leídos
+      .neq('id_perfil_emisor', uid)     // Que NO los haya enviado yo
       .is('deleted_at', null)
 
-    setUnreadMessages(count ?? 0)
+    if (!error) {
+      setUnreadMessages(count ?? 0)
+    }
   }, [])
 
-  // 2. Refrescar Notificaciones (Corregido para evitar error de tipos)
+  // 2. Refrescar Notificaciones
   const refreshNotifCount = useCallback(async (uid: string) => {
     const { count } = await supabase
       .from('notificacion')
@@ -78,17 +73,19 @@ export default function FisioDashPage() {
       
       if (perfil?.nombre) setUserName(perfil.nombre)
       
-      // Carga inicial
       refreshNotifCount(user.id)
       refreshUnreadMessages(user.id)
 
-      // Escucha de cambios en tiempo real
+      // ESCUCHA TOTAL: Reacciona a cualquier cambio (INSERT, UPDATE, DELETE)
       globalChannel = supabase
-        .channel('global-dashboard-updates')
+        .channel('global-dashboard-realtime')
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'mensaje' }, 
-          () => refreshUnreadMessages(user.id)
+          () => {
+            console.log("Actualizando conteo de mensajes...");
+            refreshUnreadMessages(user.id);
+          }
         )
         .on(
           'postgres_changes', 
@@ -119,7 +116,6 @@ export default function FisioDashPage() {
 
   return (
     <div className="dash-root">
-      {/* SIDEBAR */}
       <aside className="dash-sidebar">
         <div className="dash-sidebar-brand">
           <div className="dash-logo">
@@ -149,7 +145,6 @@ export default function FisioDashPage() {
         </nav>
       </aside>
 
-      {/* MAIN CONTENT */}
       <div className="dash-main">
         <header className="dash-topbar">
           <div className="dash-topbar-left">
@@ -157,17 +152,14 @@ export default function FisioDashPage() {
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
           <div className="dash-topbar-actions">
-            {/* Botón Notificaciones */}
             <button className="dash-t-btn" onClick={() => setActiveSection('notificaciones')}>
-              🔔
-              {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
+              🔔 {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
             </button>
 
-            {/* Botón Mensajes */}
             <button className="dash-t-btn primary" onClick={() => setActiveSection('mensajes')}>
-              💬
+              💬 Mensajes
               {unreadMessages > 0 && (
-                <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>
+                <span className="topbar-badge" style={{ background: '#E74C3C', color: '#FFF' }}>
                   {unreadMessages}
                 </span>
               )}
