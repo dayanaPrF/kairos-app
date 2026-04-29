@@ -89,7 +89,6 @@ export function FisioSectionBandeja() {
   const loadConversations = useCallback(async (userId: string) => {
     setLoading(true)
     try {
-      // Pacientes asignados al fisioterapeuta
       const { data: asignaciones } = await supabase
         .from('paciente_fisioterapeuta')
         .select('id_paciente')
@@ -150,7 +149,7 @@ export function FisioSectionBandeja() {
             .select('id_mensaje', { count: 'exact', head: true })
             .eq('id_chat', chat.id_chat)
             .eq('leido', false)
-            .neq('id_perfil_emisor', userId) // Mensajes que vienen del paciente
+            .neq('id_perfil_emisor', userId)
             .is('deleted_at', null)
 
           const last = lastMsgs?.[0]
@@ -180,21 +179,22 @@ export function FisioSectionBandeja() {
   const loadMessages = useCallback(async (conv: Conversation, userId: string) => {
     if (!conv.id_chat) { setMessages([]); return }
 
-    const { data } = await supabase
-      .from('mensaje')
-      .select('id_mensaje, id_chat, id_perfil_emisor, contenido, fecha_envio, leido')
-      .eq('id_chat', conv.id_chat)
-      .is('deleted_at', null)
-      .order('fecha_envio', { ascending: true })
-
-    setMessages(data ?? [])
-
+    // MARCAR COMO LEÍDOS: Esto dispara el Realtime en el Dashboard
     await supabase
       .from('mensaje')
       .update({ leido: true, fecha_lectura: new Date().toISOString() })
       .eq('id_chat', conv.id_chat)
       .eq('leido', false)
       .neq('id_perfil_emisor', userId)
+
+    const { data } = await supabase
+      .from('mensaje')
+      .select('*')
+      .eq('id_chat', conv.id_chat)
+      .is('deleted_at', null)
+      .order('fecha_envio', { ascending: true })
+
+    setMessages(data ?? [])
 
     setConversations(prev =>
       prev.map(c => c.id_chat === conv.id_chat ? { ...c, unread_count: 0 } : c)
@@ -234,13 +234,7 @@ export function FisioSectionBandeja() {
       if (!chatId) {
         const { data: newChat } = await supabase.from('chat').insert({ id_fisioterapeuta: myId, id_paciente: selected.id_paciente }).select('id_chat').single()
         chatId = newChat?.id_chat ?? ''
-        if (!chatId) {
-          const { data: existing } = await supabase.from('chat').select('id_chat').eq('id_fisioterapeuta', myId).eq('id_paciente', selected.id_paciente).single()
-          chatId = existing?.id_chat ?? ''
-        }
-        if (!chatId) return
         setSelected(prev => prev ? { ...prev, id_chat: chatId } : prev)
-        setConversations(prev => prev.map(c => c.id_paciente === selected.id_paciente ? { ...c, id_chat: chatId } : c))
       }
 
       const { data: newMsg } = await supabase.from('mensaje').insert({ id_chat: chatId, id_perfil_emisor: myId, contenido: texto, tipo_contenido: 'texto', leido: false, fecha_envio: new Date().toISOString() }).select('*').single()
@@ -261,7 +255,6 @@ export function FisioSectionBandeja() {
 
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 120px)', background: 'var(--color-background-primary)', borderRadius: '16px', overflow: 'hidden', border: '0.5px solid var(--color-border-tertiary)', boxShadow: '0 2px 24px rgba(0,0,0,0.06)' }}>
-      {/* Sidebar de Chats */}
       <div style={{ width: '300px', minWidth: '260px', display: 'flex', flexDirection: 'column', borderRight: '0.5px solid var(--color-border-tertiary)' }}>
         <div style={{ padding: '20px 16px 12px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
           <div style={{ fontSize: '17px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '12px' }}>Mensajes con Pacientes</div>
@@ -295,7 +288,6 @@ export function FisioSectionBandeja() {
         </div>
       </div>
 
-      {/* Área de Chat */}
       {!selected ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--color-border-secondary)" strokeWidth="1.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
@@ -314,7 +306,7 @@ export function FisioSectionBandeja() {
             {grouped.map(group => (
               <div key={group.label}>
                 <div style={{ textAlign: 'center', margin: '14px 0', fontSize: '10px', color: 'var(--color-text-secondary)' }}>{group.label}</div>
-                {group.messages.map((msg, idx) => {
+                {group.messages.map((msg) => {
                   const isMe = msg.id_perfil_emisor === myId
                   return (
                     <div key={msg.id_mensaje} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', marginBottom: '8px' }}>

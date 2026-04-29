@@ -23,7 +23,6 @@ export default function FisioDashPage() {
   const [notifCount, setNotifCount] = useState(0)
   const [unreadMessages, setUnreadMessages] = useState(0)
 
-  // Función para refrescar mensajes no leídos (provenientes de pacientes)
   const refreshUnreadMessages = useCallback(async (userId: string) => {
     const { data: chats } = await supabase
       .from('chat')
@@ -42,7 +41,7 @@ export default function FisioDashPage() {
       .select('id_mensaje', { count: 'exact', head: true })
       .in('id_chat', chatIds)
       .eq('leido', false)
-      .neq('id_perfil_emisor', userId) // Mensajes que el fisio aún no lee
+      .neq('id_perfil_emisor', userId)
       .is('deleted_at', null)
 
     setUnreadMessages(count ?? 0)
@@ -61,11 +60,12 @@ export default function FisioDashPage() {
   }, [])
 
   useEffect(() => {
+    let channel: any;
+
     const initData = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Nombre del Perfil
       const { data: perfil } = await supabase
         .from('perfil')
         .select('nombre')
@@ -73,11 +73,23 @@ export default function FisioDashPage() {
         .maybeSingle()
       if (perfil?.nombre) setUserName(perfil.nombre)
 
-      // Cargas iniciales
       refreshNotifCount()
       refreshUnreadMessages(user.id)
+
+      // SUSCRIPCIÓN EN TIEMPO REAL: Si un mensaje se marca como leído, actualiza el contador global
+      channel = supabase
+        .channel('global-chat-updates')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'mensaje' }, () => {
+            refreshUnreadMessages(user.id);
+        })
+        .subscribe()
     }
+
     initData()
+
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+    }
   }, [refreshNotifCount, refreshUnreadMessages])
 
   const todayStr = new Date().toLocaleDateString('es-MX', {
@@ -111,132 +123,56 @@ export default function FisioDashPage() {
 
   return (
     <div className="dash-root">
-      {/* ── SIDEBAR ── */}
       <aside className="dash-sidebar">
         <div className="dash-sidebar-brand">
           <div className="dash-logo">
-            <Image
-              src="/logo_kairos.png"
-              alt="Kairós Logo"
-              width={70}
-              height={70}
-              style={{ width: 'auto', height: 'auto' }}
-              priority
-            />
+            <Image src="/logo_kairos.png" alt="Kairós Logo" width={70} height={70} style={{ width: 'auto', height: 'auto' }} priority />
           </div>
           <div className="dash-brand-tag">Panel Fisioterapeuta</div>
         </div>
-
         <nav className="dash-sidebar-nav">
           {navItems.map(({ key, icon, label }) => (
-            <button
-              key={key}
-              className={`dash-nav-item ${activeSection === key ? 'active' : ''}`}
-              onClick={() => setActiveSection(key)}
-            >
+            <button key={key} className={`dash-nav-item ${activeSection === key ? 'active' : ''}`} onClick={() => setActiveSection(key)}>
               <span className="dash-nav-icon">{icon}</span>
               {label}
-
-              {/* Badge para Notificaciones */}
-              {key === 'notificaciones' && notifCount > 0 && (
-                <span className="sidebar-badge">{notifCount > 9 ? '9+' : notifCount}</span>
-              )}
-
-              {/* Badge para Mensajes */}
-              {key === 'mensajes' && unreadMessages > 0 && (
-                <span className="sidebar-badge" style={{ background: '#1A73E8' }}>
-                  {unreadMessages > 9 ? '9+' : unreadMessages}
-                </span>
-              )}
-
+              {key === 'notificaciones' && notifCount > 0 && <span className="sidebar-badge">{notifCount > 9 ? '9+' : notifCount}</span>}
+              {key === 'mensajes' && unreadMessages > 0 && <span className="sidebar-badge" style={{ background: '#1A73E8' }}>{unreadMessages > 9 ? '9+' : unreadMessages}</span>}
               {activeSection === key && <div className="dash-nav-dot" />}
             </button>
           ))}
         </nav>
-
-        <div className="dash-sidebar-footer">
-          <div className="dash-sf-hint">Kairós · Fisioterapeutas</div>
-        </div>
       </aside>
 
-      {/* ── MAIN ── */}
       <div className="dash-main">
-        {/* TOPBAR */}
         <header className="dash-topbar">
           <div className="dash-topbar-left">
             <div className="dash-topbar-title">Hola, Dr. {userName} 👋</div>
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
-
           <div className="dash-topbar-actions">
-            {/* Botón de Notificaciones en Topbar */}
-            <button
-              className="dash-t-btn"
-              style={{ position: 'relative' }}
-              onClick={() => setActiveSection('notificaciones')}
-            >
+            <button className="dash-t-btn" style={{ position: 'relative' }} onClick={() => setActiveSection('notificaciones')}>
               🔔 Notificaciones
-              {notifCount > 0 && (
-                <span className="topbar-badge">{notifCount > 9 ? '9+' : notifCount}</span>
-              )}
+              {notifCount > 0 && <span className="topbar-badge">{notifCount > 9 ? '9+' : notifCount}</span>}
             </button>
-
-            {/* Botón de Mensajes en Topbar */}
-            <button
-              className="dash-t-btn primary"
-              style={{ position: 'relative' }}
-              onClick={() => setActiveSection('mensajes')}
-            >
+            <button className="dash-t-btn primary" style={{ position: 'relative' }} onClick={() => setActiveSection('mensajes')}>
               💬 Mensajes
-              {unreadMessages > 0 && (
-                <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>
-                  {unreadMessages > 9 ? '9+' : unreadMessages}
-                </span>
-              )}
+              {unreadMessages > 0 && <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>{unreadMessages > 9 ? '9+' : unreadMessages}</span>}
             </button>
-
             <Link href="/fisio/perfil" className="dash-avatar-link">
               <button className="dash-s-avatar">{userName[0]}</button>
             </Link>
-
             <div>
               <div className="dash-s-name">{userName}</div>
               <div className="dash-s-role">Fisioterapeuta</div>
             </div>
           </div>
         </header>
-
-        {/* CONTENT */}
-        <div className="dash-content">
-          {renderSection()}
-        </div>
+        <div className="dash-content">{renderSection()}</div>
       </div>
 
       <style jsx>{`
-        .sidebar-badge {
-          margin-left: auto;
-          background: #E74C3C;
-          color: #fff;
-          border-radius: 12px;
-          padding: 1px 7px;
-          fontSize: 0.7rem;
-          font-weight: 700;
-        }
-        .topbar-badge {
-          position: absolute;
-          top: 4px;
-          right: 4px;
-          background: #E74C3C;
-          color: #fff;
-          border-radius: 50%;
-          width: 16px;
-          height: 16px;
-          font-size: 0.6rem;
-          font-weight: 700;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
+        .sidebar-badge { margin-left: auto; background: #E74C3C; color: #fff; border-radius: 12px; padding: 1px 7px; fontSize: 0.7rem; font-weight: 700; }
+        .topbar-badge { position: absolute; top: 4px; right: 4px; background: #E74C3C; color: #fff; border-radius: 50%; width: 16px; height: 16px; font-size: 0.6rem; font-weight: 700; display: flex; alignItems: center; justifyContent: center; }
       `}</style>
     </div>
   )
