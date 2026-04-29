@@ -176,16 +176,20 @@ export function FisioSectionBandeja() {
     if (myId) loadConversations(myId)
   }, [myId, loadConversations])
 
-  const loadMessages = useCallback(async (conv: Conversation, userId: string) => {
-    if (!conv.id_chat) { setMessages([]); return }
-
-    // MARCAR COMO LEÍDOS: Esto dispara el Realtime en el Dashboard
+  // MARCAR COMO LEÍDO AL SELECCIONAR O RECIBIR
+  const markAsRead = async (chatId: string, userId: string) => {
     await supabase
       .from('mensaje')
       .update({ leido: true, fecha_lectura: new Date().toISOString() })
-      .eq('id_chat', conv.id_chat)
+      .eq('id_chat', chatId)
       .eq('leido', false)
       .neq('id_perfil_emisor', userId)
+  }
+
+  const loadMessages = useCallback(async (conv: Conversation, userId: string) => {
+    if (!conv.id_chat) { setMessages([]); return }
+
+    await markAsRead(conv.id_chat, userId)
 
     const { data } = await supabase
       .from('mensaje')
@@ -205,20 +209,31 @@ export function FisioSectionBandeja() {
     if (selected && myId) loadMessages(selected, myId)
   }, [selected, myId, loadMessages])
 
+  // TIEMPO REAL: ESCUCHA DE MENSAJES EN CHAT ABIERTO
   useEffect(() => {
     if (!selected?.id_chat || !myId) return
+    
     realtimeRef.current?.unsubscribe()
+    
     const channel = supabase
       .channel(`chat:${selected.id_chat}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensaje', filter: `id_chat=eq.${selected.id_chat}` },
+      .on('postgres_changes', 
+        { event: 'INSERT', schema: 'public', table: 'mensaje', filter: `id_chat=eq.${selected.id_chat}` },
         async (payload) => {
           const newMsg = payload.new as Message
-          setMessages(prev => (prev.find(m => m.id_mensaje === newMsg.id_mensaje) ? prev : [...prev, newMsg]))
+          
+          setMessages(prev => {
+            if (prev.some(m => m.id_mensaje === newMsg.id_mensaje)) return prev
+            return [...prev, newMsg]
+          })
+
+          // Si el mensaje viene del paciente, lo marcamos como leído ipso facto
           if (newMsg.id_perfil_emisor !== myId) {
-            await supabase.from('mensaje').update({ leido: true, fecha_lectura: new Date().toISOString() }).eq('id_mensaje', newMsg.id_mensaje)
+            await markAsRead(selected.id_chat, myId)
           }
         }
       ).subscribe()
+      
     realtimeRef.current = channel
     return () => { channel.unsubscribe() }
   }, [selected?.id_chat, myId])
@@ -238,6 +253,7 @@ export function FisioSectionBandeja() {
       }
 
       const { data: newMsg } = await supabase.from('mensaje').insert({ id_chat: chatId, id_perfil_emisor: myId, contenido: texto, tipo_contenido: 'texto', leido: false, fecha_envio: new Date().toISOString() }).select('*').single()
+      
       if (newMsg) {
         setMessages(prev => [...prev, newMsg])
         setConversations(prev => prev.map(c => c.id_chat === chatId ? { ...c, last_message: texto, last_message_at: newMsg.fecha_envio } : c))
@@ -255,9 +271,10 @@ export function FisioSectionBandeja() {
 
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 120px)', background: 'var(--color-background-primary)', borderRadius: '16px', overflow: 'hidden', border: '0.5px solid var(--color-border-tertiary)', boxShadow: '0 2px 24px rgba(0,0,0,0.06)' }}>
+      {/* Sidebar de Chats */}
       <div style={{ width: '300px', minWidth: '260px', display: 'flex', flexDirection: 'column', borderRight: '0.5px solid var(--color-border-tertiary)' }}>
         <div style={{ padding: '20px 16px 12px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
-          <div style={{ fontSize: '17px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '12px' }}>Mensajes con Pacientes</div>
+          <div style={{ fontSize: '17px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '12px' }}>Mensajes</div>
           <input
             type="text"
             placeholder="Buscar paciente..."
@@ -270,16 +287,16 @@ export function FisioSectionBandeja() {
           {filtered.map(conv => {
             const isActive = selected?.id_paciente === conv.id_paciente
             return (
-              <button key={conv.id_paciente} onClick={() => setSelected(conv)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '11px', padding: '11px 14px', border: 'none', background: isActive ? 'var(--color-background-info)' : 'transparent', borderLeft: isActive ? '3px solid #1A73E8' : '3px solid transparent', cursor: 'pointer' }}>
+              <button key={conv.id_paciente} onClick={() => setSelected(conv)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '11px', padding: '11px 14px', border: 'none', background: isActive ? 'var(--color-background-info)' : 'transparent', borderLeft: isActive ? '3px solid #1A73E8' : '3px solid transparent', cursor: 'pointer', textAlign: 'left' }}>
                 <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: isActive ? '#1A73E8' : '#E8F4FD', color: isActive ? '#fff' : '#1A6FAA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 }}>{conv.paciente_avatar}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: conv.unread_count > 0 ? 600 : 400, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{conv.paciente_nombre}</span>
+                    <span style={{ fontSize: '13px', fontWeight: conv.unread_count > 0 ? 700 : 500, color: 'var(--color-text-primary)' }}>{conv.paciente_nombre}</span>
                     <span style={{ fontSize: '10px', color: 'var(--color-text-secondary)' }}>{formatTime(conv.last_message_at)}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{conv.last_message}</span>
-                    {conv.unread_count > 0 && <span style={{ background: '#1A73E8', color: '#fff', borderRadius: '12px', padding: '1px 6px', fontSize: '10px', fontWeight: 700 }}>{conv.unread_count}</span>}
+                    {conv.unread_count > 0 && <span style={{ background: '#1A73E8', color: '#fff', borderRadius: '12px', padding: '1px 7px', fontSize: '10px', fontWeight: 700 }}>{conv.unread_count}</span>}
                   </div>
                 </div>
               </button>
@@ -288,31 +305,30 @@ export function FisioSectionBandeja() {
         </div>
       </div>
 
+      {/* Ventana de Chat */}
       {!selected ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
-           <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--color-border-secondary)" strokeWidth="1.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-           <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>Selecciona un paciente para chatear</div>
+           <div style={{ fontSize: '3rem' }}>💬</div>
+           <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>Selecciona un paciente para comenzar</div>
         </div>
       ) : (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '13px 18px', borderBottom: '0.5px solid var(--color-border-tertiary)', display: 'flex', alignItems: 'center', gap: '11px' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f9f9f9' }}>
+          <div style={{ padding: '13px 18px', background: '#fff', borderBottom: '0.5px solid var(--color-border-tertiary)', display: 'flex', alignItems: 'center', gap: '11px' }}>
             <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#E8F4FD', color: '#1A6FAA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}>{selected.paciente_avatar}</div>
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 600 }}>{selected.paciente_nombre}</div>
-              <div style={{ fontSize: '11px', color: '#1A6FAA' }}>Paciente</div>
-            </div>
+            <div style={{ fontSize: '14px', fontWeight: 600 }}>{selected.paciente_nombre}</div>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', background: 'var(--color-background-secondary)' }}>
+          
+          <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px' }}>
             {grouped.map(group => (
               <div key={group.label}>
-                <div style={{ textAlign: 'center', margin: '14px 0', fontSize: '10px', color: 'var(--color-text-secondary)' }}>{group.label}</div>
+                <div style={{ textAlign: 'center', margin: '20px 0', fontSize: '11px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{group.label}</div>
                 {group.messages.map((msg) => {
                   const isMe = msg.id_perfil_emisor === myId
                   return (
-                    <div key={msg.id_mensaje} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', marginBottom: '8px' }}>
-                      <div style={{ padding: '8px 12px', borderRadius: '14px', background: isMe ? '#1A73E8' : '#fff', color: isMe ? '#fff' : '#333', fontSize: '13px', maxWidth: '70%', border: isMe ? 'none' : '0.5px solid #ddd' }}>
+                    <div key={msg.id_mensaje} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', marginBottom: '10px' }}>
+                      <div style={{ padding: '9px 14px', borderRadius: '18px', borderBottomRightRadius: isMe ? '4px' : '18px', borderBottomLeftRadius: isMe ? '18px' : '4px', background: isMe ? '#1A73E8' : '#fff', color: isMe ? '#fff' : '#333', fontSize: '14px', maxWidth: '75%', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
                         {msg.contenido}
-                        <div style={{ fontSize: '9px', textAlign: 'right', marginTop: '4px', opacity: 0.8 }}>{formatMessageTime(msg.fecha_envio)}</div>
+                        <div style={{ fontSize: '10px', textAlign: 'right', marginTop: '4px', opacity: 0.7 }}>{formatMessageTime(msg.fecha_envio)}</div>
                       </div>
                     </div>
                   )
@@ -321,16 +337,17 @@ export function FisioSectionBandeja() {
             ))}
             <div ref={messagesEndRef} />
           </div>
-          <div style={{ padding: '12px', borderTop: '0.5px solid #ddd', display: 'flex', gap: '8px' }}>
+
+          <div style={{ padding: '16px', background: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px', alignItems: 'center' }}>
             <textarea
               ref={inputRef}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
               placeholder="Escribe un mensaje..."
-              style={{ flex: 1, borderRadius: '20px', padding: '10px 15px', border: '1px solid #ddd', resize: 'none', height: '40px', outline: 'none' }}
+              style={{ flex: 1, borderRadius: '24px', padding: '12px 18px', border: '1px solid #ddd', resize: 'none', height: '45px', outline: 'none', fontSize: '14px' }}
             />
-            <button onClick={handleSend} style={{ background: '#1A73E8', color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' }}>
+            <button onClick={handleSend} style={{ background: '#1A73E8', color: '#fff', border: 'none', borderRadius: '50%', width: '42px', height: '42px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
               {sending ? '...' : '➤'}
             </button>
           </div>
