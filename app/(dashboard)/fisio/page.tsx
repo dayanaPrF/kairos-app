@@ -24,19 +24,19 @@ export default function FisioDashPage() {
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [userId, setUserId] = useState<string | null>(null)
 
-  // 1. Refrescar Mensajes No Leídos (Versión Optimizada y Directa)
+  // 1. Refrescar Mensajes No Leídos (Directo a la tabla mensaje)
   const refreshUnreadMessages = useCallback(async (uid: string) => {
-    // Contamos directamente en la tabla mensaje. 
-    // Filtramos mensajes donde el receptor es el usuario actual (vía el id_chat vinculado al fisio)
+    // Buscamos mensajes no leídos donde el emisor NO sea el usuario actual
+    // y que pertenezcan a un chat donde el usuario es el fisioterapeuta
     const { count, error } = await supabase
       .from('mensaje')
       .select(`
         id_mensaje,
         chat!inner(id_fisioterapeuta)
       `, { count: 'exact', head: true })
-      .eq('chat.id_fisioterapeuta', uid) // Solo mensajes de mis chats
-      .eq('leido', false)               // Que no estén leídos
-      .neq('id_perfil_emisor', uid)     // Que NO los haya enviado yo
+      .eq('chat.id_fisioterapeuta', uid)
+      .eq('leido', false)
+      .neq('id_perfil_emisor', uid)
       .is('deleted_at', null)
 
     if (!error) {
@@ -65,6 +65,7 @@ export default function FisioDashPage() {
       if (!user) return
       setUserId(user.id)
 
+      // Carga inicial de datos
       const { data: perfil } = await supabase
         .from('perfil')
         .select('nombre')
@@ -76,15 +77,15 @@ export default function FisioDashPage() {
       refreshNotifCount(user.id)
       refreshUnreadMessages(user.id)
 
-      // ESCUCHA TOTAL: Reacciona a cualquier cambio (INSERT, UPDATE, DELETE)
+      // SUSCRIPCIÓN REALTIME
       globalChannel = supabase
-        .channel('global-dashboard-realtime')
+        .channel('dashboard-realtime-v2')
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'mensaje' }, 
-          () => {
-            console.log("Actualizando conteo de mensajes...");
-            refreshUnreadMessages(user.id);
+          (payload) => {
+            // Cuando hay CUALQUIER cambio (nuevo mensaje o mensaje marcado como leido)
+            refreshUnreadMessages(user.id)
           }
         )
         .on(
@@ -152,10 +153,12 @@ export default function FisioDashPage() {
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
           <div className="dash-topbar-actions">
+            {/* Notificaciones Header */}
             <button className="dash-t-btn" onClick={() => setActiveSection('notificaciones')}>
               🔔 {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
             </button>
 
+            {/* Mensajes Header */}
             <button className="dash-t-btn primary" onClick={() => setActiveSection('mensajes')}>
               💬 Mensajes
               {unreadMessages > 0 && (
