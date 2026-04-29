@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../../../lib/supabase'
 import Image from 'next/image'
 import Link from 'next/link'
 
+// Importación de Secciones
 import { FisioSectionHome } from '@/app/(dashboard)/fisio/sections/FisioSectionHome'
 import { FisioSectionPacientes } from '@/app/(dashboard)/fisio/sections/FisioSectionPacientes'
 import { FisioSectionAgenda } from '@/app/(dashboard)/fisio/sections/FisioSectionAgenda'
@@ -12,45 +13,42 @@ import { FisioSectionRutinas } from '@/app/(dashboard)/fisio/sections/FisioSecti
 import { FisioSectionClinica } from '@/app/(dashboard)/fisio/sections/FisioSectionClinica'
 import { FisioSectionReportes } from '@/app/(dashboard)/fisio/sections/FisioSectionReportes'
 import { FisioSectionNotificaciones } from '@/app/(dashboard)/fisio/sections/FisioSectionNotificaciones'
+import { FisioSectionBandeja } from '@/app/(dashboard)/fisio/sections/FisioSectionBandeja'
 
-// ── 1. Agregar 'notificaciones' al tipo ──────────────────────────────────────
 type Section = 'home' | 'pacientes' | 'agenda' | 'rutinas' | 'mensajes' | 'clinica' | 'reportes' | 'notificaciones'
 
 export default function FisioDashPage() {
-  const [userName, setUserName]         = useState('Fisioterapeuta')
+  const [userName, setUserName] = useState('Fisioterapeuta')
   const [activeSection, setActiveSection] = useState<Section>('home')
-  const [notifCount, setNotifCount]     = useState(0)
+  const [notifCount, setNotifCount] = useState(0)
+  const [unreadMessages, setUnreadMessages] = useState(0)
 
-  useEffect(() => {
-    const getProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+  // Función para refrescar mensajes no leídos (provenientes de pacientes)
+  const refreshUnreadMessages = useCallback(async (userId: string) => {
+    const { data: chats } = await supabase
+      .from('chat')
+      .select('id_chat')
+      .eq('id_fisioterapeuta', userId)
+      .is('deleted_at', null)
 
-      const { data: perfil } = await supabase
-        .from('perfil')
-        .select('nombre')
-        .eq('id_perfil', user.id)
-        .maybeSingle()
-
-      if (perfil?.nombre) setUserName(perfil.nombre)
-
-      const { data } = await supabase
-        .from('notificacion')
-        .select('id_notificacion')
-        .eq('id_perfil', user.id)
-        .is('deleted_at', null)
-        .not('estado', 'ilike', 'leida')
-
-      setNotifCount(data?.length ?? 0)
+    if (!chats?.length) {
+      setUnreadMessages(0)
+      return
     }
-    getProfile()
+
+    const chatIds = chats.map(c => c.id_chat)
+    const { count } = await supabase
+      .from('mensaje')
+      .select('id_mensaje', { count: 'exact', head: true })
+      .in('id_chat', chatIds)
+      .eq('leido', false)
+      .neq('id_perfil_emisor', userId) // Mensajes que el fisio aún no lee
+      .is('deleted_at', null)
+
+    setUnreadMessages(count ?? 0)
   }, [])
 
-  const todayStr = new Date().toLocaleDateString('es-MX', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  })
-
-  const refreshNotifCount = async () => {
+  const refreshNotifCount = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data } = await supabase
@@ -60,14 +58,38 @@ export default function FisioDashPage() {
       .is('deleted_at', null)
       .not('estado', 'ilike', 'leida')
     setNotifCount(data?.length ?? 0)
-  }
+  }, [])
 
-  // ── 2. Agregar notificaciones al nav ─────────────────────────────────────────
+  useEffect(() => {
+    const initData = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Nombre del Perfil
+      const { data: perfil } = await supabase
+        .from('perfil')
+        .select('nombre')
+        .eq('id_perfil', user.id)
+        .maybeSingle()
+      if (perfil?.nombre) setUserName(perfil.nombre)
+
+      // Cargas iniciales
+      refreshNotifCount()
+      refreshUnreadMessages(user.id)
+    }
+    initData()
+  }, [refreshNotifCount, refreshUnreadMessages])
+
+  const todayStr = new Date().toLocaleDateString('es-MX', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  })
+
   const navItems: { key: Section; icon: string; label: string }[] = [
     { key: 'home',            icon: '🏠', label: 'Inicio'          },
     { key: 'pacientes',       icon: '🧑‍🦽', label: 'Mis pacientes'   },
     { key: 'agenda',          icon: '📅', label: 'Agenda'          },
     { key: 'rutinas',         icon: '🏋️', label: 'Rutinas'         },
+    { key: 'mensajes',        icon: '💬', label: 'Mensajes'        },
     { key: 'notificaciones',  icon: '🔔', label: 'Notificaciones'  },
     { key: 'clinica',         icon: '🏥', label: 'Mi clínica'      },
     { key: 'reportes',        icon: '📊', label: 'Reportes'        },
@@ -79,15 +101,16 @@ export default function FisioDashPage() {
       case 'pacientes':      return <FisioSectionPacientes />
       case 'agenda':         return <FisioSectionAgenda />
       case 'rutinas':        return <FisioSectionRutinas />
+      case 'mensajes':       return <FisioSectionBandeja />
       case 'notificaciones': return <FisioSectionNotificaciones onLeidas={refreshNotifCount} />
       case 'clinica':        return <FisioSectionClinica />
       case 'reportes':       return <FisioSectionReportes/>
+      default:               return <FisioSectionHome />
     }
   }
 
   return (
     <div className="dash-root">
-
       {/* ── SIDEBAR ── */}
       <aside className="dash-sidebar">
         <div className="dash-sidebar-brand">
@@ -114,14 +137,15 @@ export default function FisioDashPage() {
               <span className="dash-nav-icon">{icon}</span>
               {label}
 
-              {/* ── 3. Badge en sidebar solo en notificaciones ── */}
+              {/* Badge para Notificaciones */}
               {key === 'notificaciones' && notifCount > 0 && (
-                <span style={{
-                  marginLeft: 'auto', background: '#E74C3C', color: '#fff',
-                  borderRadius: '12px', padding: '1px 7px',
-                  fontSize: '0.7rem', fontWeight: 700,
-                }}>
-                  {notifCount > 9 ? '9+' : notifCount}
+                <span className="sidebar-badge">{notifCount > 9 ? '9+' : notifCount}</span>
+              )}
+
+              {/* Badge para Mensajes */}
+              {key === 'mensajes' && unreadMessages > 0 && (
+                <span className="sidebar-badge" style={{ background: '#1A73E8' }}>
+                  {unreadMessages > 9 ? '9+' : unreadMessages}
                 </span>
               )}
 
@@ -137,7 +161,6 @@ export default function FisioDashPage() {
 
       {/* ── MAIN ── */}
       <div className="dash-main">
-
         {/* TOPBAR */}
         <header className="dash-topbar">
           <div className="dash-topbar-left">
@@ -146,32 +169,30 @@ export default function FisioDashPage() {
           </div>
 
           <div className="dash-topbar-actions">
-
-            {/* ── 4. Botón topbar navega a 'notificaciones', no a 'mensajes' ── */}
+            {/* Botón de Notificaciones en Topbar */}
             <button
               className="dash-t-btn"
               style={{ position: 'relative' }}
-              onClick={() => { setActiveSection('notificaciones'); setNotifCount(0) }}
+              onClick={() => setActiveSection('notificaciones')}
             >
               🔔 Notificaciones
               {notifCount > 0 && (
-                <span style={{
-                  position: 'absolute', top: '4px', right: '4px',
-                  background: '#E74C3C', color: '#fff', borderRadius: '50%',
-                  width: '16px', height: '16px', fontSize: '0.6rem',
-                  fontWeight: 700, display: 'flex', alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  {notifCount > 9 ? '9+' : notifCount}
-                </span>
+                <span className="topbar-badge">{notifCount > 9 ? '9+' : notifCount}</span>
               )}
             </button>
 
+            {/* Botón de Mensajes en Topbar */}
             <button
               className="dash-t-btn primary"
+              style={{ position: 'relative' }}
               onClick={() => setActiveSection('mensajes')}
             >
               💬 Mensajes
+              {unreadMessages > 0 && (
+                <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>
+                  {unreadMessages > 9 ? '9+' : unreadMessages}
+                </span>
+              )}
             </button>
 
             <Link href="/fisio/perfil" className="dash-avatar-link">
@@ -190,19 +211,33 @@ export default function FisioDashPage() {
           {renderSection()}
         </div>
       </div>
-    </div>
-  )
-}
 
-function ComingSoon({ label, icon }: { label: string; icon: string }) {
-  return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', height: '60vh', gap: '12px', opacity: 0.4,
-    }}>
-      <span style={{ fontSize: '3rem' }}>{icon}</span>
-      <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{label}</div>
-      <div style={{ fontSize: '0.85rem' }}>Próximamente</div>
+      <style jsx>{`
+        .sidebar-badge {
+          margin-left: auto;
+          background: #E74C3C;
+          color: #fff;
+          border-radius: 12px;
+          padding: 1px 7px;
+          fontSize: 0.7rem;
+          font-weight: 700;
+        }
+        .topbar-badge {
+          position: absolute;
+          top: 4px;
+          right: 4px;
+          background: #E74C3C;
+          color: #fff;
+          border-radius: 50%;
+          width: 16px;
+          height: 16px;
+          font-size: 0.6rem;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+      `}</style>
     </div>
   )
 }
