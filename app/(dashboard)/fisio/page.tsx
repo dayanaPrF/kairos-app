@@ -5,7 +5,7 @@ import { supabase } from '../../../lib/supabase'
 import Image from 'next/image'
 import Link from 'next/link'
 
-// Secciones
+// Importación de Secciones
 import { FisioSectionHome } from '@/app/(dashboard)/fisio/sections/FisioSectionHome'
 import { FisioSectionPacientes } from '@/app/(dashboard)/fisio/sections/FisioSectionPacientes'
 import { FisioSectionAgenda } from '@/app/(dashboard)/fisio/sections/FisioSectionAgenda'
@@ -24,9 +24,8 @@ export default function FisioDashPage() {
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [userId, setUserId] = useState<string | null>(null)
 
-  // Función para contar mensajes no leídos
+  // 1. Refrescar Mensajes No Leídos
   const refreshUnreadMessages = useCallback(async (uid: string) => {
-    // Buscamos chats donde participa este fisio
     const { data: chats } = await supabase
       .from('chat')
       .select('id_chat')
@@ -39,8 +38,6 @@ export default function FisioDashPage() {
     }
 
     const chatIds = chats.map(c => c.id_chat)
-    
-    // Contamos mensajes donde leido = false y el emisor NO es el fisio
     const { count } = await supabase
       .from('mensaje')
       .select('id_mensaje', { count: 'exact', head: true })
@@ -52,16 +49,19 @@ export default function FisioDashPage() {
     setUnreadMessages(count ?? 0)
   }, [])
 
+  // 2. Refrescar Notificaciones (Corregido para evitar error de tipos)
   const refreshNotifCount = useCallback(async (uid: string) => {
-    const { data } = await supabase
+    const { count } = await supabase
       .from('notificacion')
       .select('id_notificacion', { count: 'exact', head: true })
       .eq('id_perfil', uid)
       .is('deleted_at', null)
       .not('estado', 'ilike', 'leida')
-    setNotifCount(data ? data.length : 0)
+
+    setNotifCount(count ?? 0)
   }, [])
 
+  // 3. Inicialización y Tiempo Real
   useEffect(() => {
     let globalChannel: any
 
@@ -75,30 +75,26 @@ export default function FisioDashPage() {
         .select('nombre')
         .eq('id_perfil', user.id)
         .maybeSingle()
+      
       if (perfil?.nombre) setUserName(perfil.nombre)
       
+      // Carga inicial
       refreshNotifCount(user.id)
       refreshUnreadMessages(user.id)
 
-      // ESCUCHA REALTIME DINÁMICA
-      // Escuchamos INSERT (mensajes nuevos) y UPDATE (cuando se marcan como leídos)
+      // Escucha de cambios en tiempo real
       globalChannel = supabase
-        .channel('db-changes')
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'mensaje' 
-        }, () => {
-          // Si algo cambia en la tabla mensajes, recalculamos el contador
-          refreshUnreadMessages(user.id)
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'notificacion' 
-        }, () => {
-          refreshNotifCount(user.id)
-        })
+        .channel('global-dashboard-updates')
+        .on(
+          'postgres_changes', 
+          { event: '*', schema: 'public', table: 'mensaje' }, 
+          () => refreshUnreadMessages(user.id)
+        )
+        .on(
+          'postgres_changes', 
+          { event: '*', schema: 'public', table: 'notificacion' }, 
+          () => refreshNotifCount(user.id)
+        )
         .subscribe()
     }
 
@@ -123,6 +119,7 @@ export default function FisioDashPage() {
 
   return (
     <div className="dash-root">
+      {/* SIDEBAR */}
       <aside className="dash-sidebar">
         <div className="dash-sidebar-brand">
           <div className="dash-logo">
@@ -139,7 +136,6 @@ export default function FisioDashPage() {
             >
               <span className="dash-nav-icon">{icon}</span>
               {label}
-              {/* Badge en el menú lateral */}
               {key === 'notificaciones' && notifCount > 0 && (
                 <span className="sidebar-badge">{notifCount}</span>
               )}
@@ -153,6 +149,7 @@ export default function FisioDashPage() {
         </nav>
       </aside>
 
+      {/* MAIN CONTENT */}
       <div className="dash-main">
         <header className="dash-topbar">
           <div className="dash-topbar-left">
@@ -160,15 +157,15 @@ export default function FisioDashPage() {
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
           <div className="dash-topbar-actions">
-            {/* Botón superior Notificaciones */}
+            {/* Botón Notificaciones */}
             <button className="dash-t-btn" onClick={() => setActiveSection('notificaciones')}>
-              🔔 Notificaciones
+              🔔
               {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
             </button>
 
-            {/* Botón superior Mensajes */}
+            {/* Botón Mensajes */}
             <button className="dash-t-btn primary" onClick={() => setActiveSection('mensajes')}>
-              💬 Mensajes
+              💬
               {unreadMessages > 0 && (
                 <span className="topbar-badge" style={{ background: '#FFF', color: '#1A73E8' }}>
                   {unreadMessages}
