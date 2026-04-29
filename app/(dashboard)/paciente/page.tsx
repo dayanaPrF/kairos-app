@@ -10,39 +10,72 @@ import { SectionRutina } from './sections/SectionRutina'
 import { SectionCitas } from './sections/SectionCitas'
 import { SectionProgreso } from './sections/SectionProgreso'
 import { SectionNotificaciones } from './sections/SectionNotificaciones'
+import { SectionBandeja } from './sections/SectionBandeja'
 
-type Section = 'home' | 'rutina' | 'citas' | 'progreso' | 'notificaciones'
+type Section = 'home' | 'rutina' | 'citas' | 'progreso' | 'notificaciones' | 'bandeja'
 
 export default function PacientePage() {
   const [userName, setUserName] = useState('Paciente')
   const [activeSection, setActiveSection] = useState<Section>('home')
   const [notifCount, setNotifCount] = useState(0)
+  const [unreadMessages, setUnreadMessages] = useState(0)
+
+  // Cuenta mensajes no leídos enviados por fisioterapeutas al paciente
+  const refreshUnreadMessages = async (userId: string) => {
+    // 1. Obtener todos los chats del paciente
+    const { data: chats } = await supabase
+      .from('chat')
+      .select('id_chat')
+      .eq('id_paciente', userId)
+      .is('deleted_at', null)
+
+    if (!chats?.length) {
+      setUnreadMessages(0)
+      return
+    }
+
+    const chatIds = chats.map(c => c.id_chat)
+
+    // 2. Contar mensajes no leídos en esos chats donde el emisor NO es el paciente
+    const { count } = await supabase
+      .from('mensaje')
+      .select('id_mensaje', { count: 'exact', head: true })
+      .in('id_chat', chatIds)
+      .eq('leido', false)
+      .neq('id_perfil_emisor', userId)
+      .is('deleted_at', null)
+
+    setUnreadMessages(count ?? 0)
+  }
 
   useEffect(() => {
     const getProfile = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        setUserName(user.user_metadata?.full_name?.split(' ')[0] || 'Paciente')
+      if (!user) return
 
-        // Contar notificaciones no leídas para el badge del topbar
-        const { data } = await supabase
-          .from('notificacion')
-          .select('id_notificacion', { count: 'exact', head: false })
-          .eq('id_perfil', user.id)
-          .is('deleted_at', null)
-          .not('estado', 'ilike', 'leida')
+      setUserName(user.user_metadata?.full_name?.split(' ')[0] || 'Paciente')
 
-        setNotifCount(data?.length ?? 0)
-      }
+      // Notificaciones no leídas
+      const { data: notifs } = await supabase
+        .from('notificacion')
+        .select('id_notificacion', { count: 'exact', head: false })
+        .eq('id_perfil', user.id)
+        .is('deleted_at', null)
+        .not('estado', 'ilike', 'leida')
+
+      setNotifCount(notifs?.length ?? 0)
+
+      // Mensajes no leídos (real, desde Supabase)
+      await refreshUnreadMessages(user.id)
     }
+
     getProfile()
   }, [])
 
-  // Actualizar badge cuando el usuario vuelve de notificaciones
   const handleSectionChange = (section: Section) => {
     setActiveSection(section)
-    if (section !== 'notificaciones') return
-    // Al abrir notificaciones, el badge se actualizará cuando cierre
+    // Al abrir la bandeja se limpia el badge; se recalculará al salir
+    if (section === 'bandeja') setUnreadMessages(0)
   }
 
   const refreshNotifCount = async () => {
@@ -67,6 +100,7 @@ export default function PacientePage() {
     { key: 'citas',           icon: '📅', label: 'Mis Citas'       },
     { key: 'progreso',        icon: '📊', label: 'Progreso'        },
     { key: 'notificaciones',  icon: '🔔', label: 'Notificaciones'  },
+    { key: 'bandeja',         icon: '💬', label: 'Mensajes'        },
   ]
 
   return (
@@ -97,15 +131,19 @@ export default function PacientePage() {
             >
               <span className="dash-nav-icon">{icon}</span>
               {label}
-              {/* Badge de notificaciones en sidebar */}
+
               {key === 'notificaciones' && notifCount > 0 && (
-                <span style={{
-                  marginLeft: 'auto', background: '#E74C3C', color: '#fff',
-                  borderRadius: '12px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700,
-                }}>
+                <span style={{ marginLeft: 'auto', background: '#E74C3C', color: '#fff', borderRadius: '12px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>
                   {notifCount}
                 </span>
               )}
+
+              {key === 'bandeja' && unreadMessages > 0 && (
+                <span style={{ marginLeft: 'auto', background: '#1A73E8', color: '#fff', borderRadius: '12px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>
+                  {unreadMessages}
+                </span>
+              )}
+
               {activeSection === key && <div className="dash-nav-dot" />}
             </button>
           ))}
@@ -127,33 +165,35 @@ export default function PacientePage() {
           </div>
 
           <div className="dash-topbar-actions">
-            <button className="dash-t-btn">⚙️ Configuración</button>
 
-            {/* Botón notificaciones con badge y navegación */}
             <button
               className="dash-t-btn"
               style={{ position: 'relative' }}
               onClick={() => {
                 handleSectionChange('notificaciones')
-                // Limpiar badge visualmente al abrir; se recalcula al salir
                 setNotifCount(0)
               }}
             >
               🔔 Notificaciones
               {notifCount > 0 && (
-                <span style={{
-                  position: 'absolute', top: '4px', right: '4px',
-                  background: '#E74C3C', color: '#fff', borderRadius: '50%',
-                  width: '16px', height: '16px', fontSize: '0.6rem',
-                  fontWeight: 700, display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', lineHeight: 1,
-                }}>
+                <span style={{ position: 'absolute', top: '4px', right: '4px', background: '#E74C3C', color: '#fff', borderRadius: '50%', width: '16px', height: '16px', fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
                   {notifCount > 9 ? '9+' : notifCount}
                 </span>
               )}
             </button>
 
-            <button className="dash-t-btn primary">💬 Bandeja de entrada</button>
+            <button
+              className="dash-t-btn primary"
+              style={{ position: 'relative' }}
+              onClick={() => handleSectionChange('bandeja')}
+            >
+              💬 Bandeja de entrada
+              {unreadMessages > 0 && (
+                <span style={{ position: 'absolute', top: '4px', right: '4px', background: '#E74C3C', color: '#fff', borderRadius: '50%', width: '16px', height: '16px', fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+                  {unreadMessages > 9 ? '9+' : unreadMessages}
+                </span>
+              )}
+            </button>
 
             <Link href="/paciente/perfil" className="dash-avatar-link">
               <button className="dash-s-avatar">{userName[0]}</button>
@@ -168,15 +208,12 @@ export default function PacientePage() {
 
         {/* CONTENT */}
         <div className="dash-content">
-          {activeSection === 'home' && (
-            <SectionHome onStart={() => setActiveSection('rutina')} />
-          )}
+          {activeSection === 'home'           && <SectionHome onStart={() => setActiveSection('rutina')} />}
           {activeSection === 'rutina'         && <SectionRutina />}
           {activeSection === 'citas'          && <SectionCitas />}
           {activeSection === 'progreso'       && <SectionProgreso />}
-          {activeSection === 'notificaciones' && (
-            <SectionNotificaciones onLeidas={refreshNotifCount} />
-          )}
+          {activeSection === 'notificaciones' && <SectionNotificaciones onLeidas={refreshNotifCount} />}
+          {activeSection === 'bandeja'        && <SectionBandeja />}
         </div>
       </div>
     </div>
