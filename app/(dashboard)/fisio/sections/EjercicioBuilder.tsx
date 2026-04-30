@@ -98,7 +98,12 @@ export function EjercicioBuilder({
     )
 
   const updatePoseField = (tmpId: string, field: 'nombre' | 'hold_sec', value: string | number) =>
-    update('secuencia_poses', form.secuencia_poses.map(p => p.tmpId === tmpId ? { ...p, [field]: value } : p))
+    update('secuencia_poses', form.secuencia_poses.map(p => p.tmpId !== tmpId ? p : {
+      ...p,
+      [field]: field === 'hold_sec'
+        ? (parseFloat(value as string) || 0)  // NaN → 0
+        : value,
+    }))
 
   // Agregar articulación a una pose
   const addArticulacion = (poseTmpId: string, art: Articulacion) =>
@@ -291,7 +296,8 @@ function PoseCard({
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Mantener</span>
           <input type="number" value={pose.hold_sec} min={0} max={15} step={0.5}
-            onChange={e => onUpdateField('hold_sec', parseFloat(e.target.value))}
+            onChange={e => onUpdateField('hold_sec', e.target.value)}
+            value={pose.hold_sec ?? 0}
             style={{ width: '48px', padding: '3px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.82rem', textAlign: 'center', fontWeight: 700, background: 'white' }} />
           <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>s</span>
         </div>

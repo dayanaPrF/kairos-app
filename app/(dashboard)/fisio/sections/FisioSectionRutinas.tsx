@@ -377,9 +377,9 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
         for (const ej of fase.ejercicios) {
           let id_biblioteca: string | null = ej.id_biblioteca_ejercicio ?? null
 
-          // Guardar en biblioteca si el fisio lo pidió y no viene ya de una
+          const posesLimpias = ej.secuencia_poses.map(({ tmpId, ...rest }) => rest)
+
           if (ej.guardar_en_biblioteca && !id_biblioteca) {
-            const posesLimpias = ej.secuencia_poses.map(({ tmpId, ...rest }) => rest)
             const { data: bibData } = await supabase
               .from('biblioteca_ejercicio')
               .insert({
@@ -394,25 +394,24 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
             id_biblioteca = bibData?.id_biblioteca_ejercicio ?? null
           }
 
-          // Poses personalizadas solo si viene de biblioteca Y tiene override
           const posesPersonalizadas =
-            id_biblioteca && ej.tiene_override
-              ? ej.secuencia_poses.map(({ tmpId, ...rest }) => rest)
-              : null
+            id_biblioteca && ej.tiene_override ? posesLimpias : null
 
-          await supabase.from('ejercicio').insert({
+          const { error: errE } = await supabase.from('ejercicio').insert({
             nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio',
             orden: ej.orden,
             descripcion: ej.descripcion || null,
             video_muestra: ej.video_muestra || null,
-            repeticiones: ej.repeticiones ? parseInt(ej.repeticiones) : null,
+            repeticiones: parseInt(ej.repeticiones) || null,
             icono: ej.icono,
             id_fase: faseData.id_fase,
             id_biblioteca_ejercicio: id_biblioteca,
             secuencia_poses_personalizada: posesPersonalizadas,
+            secuencia_poses: !id_biblioteca ? posesLimpias : null,  // ✅ reutiliza
             created_by: user.id,
             updated_by: user.id,
           })
+          if (errE) throw new Error(`Ejercicio "${ej.nombre_ejercicio}": ${errE.message}`)
         }
       }
       onDone()
