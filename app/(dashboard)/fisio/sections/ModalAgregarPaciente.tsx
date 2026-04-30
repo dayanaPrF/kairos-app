@@ -66,15 +66,26 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
       setError(null)
 
       try {
-        // 1. Buscar perfiles
+        const orFilter = `nombre.ilike.%${q}%,primer_apellido.ilike.%${q}%,segundo_apellido.ilike.%${q}%,correo_electronico.ilike.%${q}%`
+        
+        console.log("--- INICIANDO BÚSQUEDA ---")
+        console.log("Filtro enviado a Supabase:", orFilter)
+
         const { data: perfiles, error: perfilErr } = await supabase
           .from('perfil')
           .select('id_perfil, nombre, primer_apellido, segundo_apellido, correo_electronico, fecha_nacimiento')
-          .or(`nombre.ilike.%${q}%,primer_apellido.ilike.%${q}%,segundo_apellido.ilike.%${q}%,correo_electronico.ilike.%${q}%`)
+          .or(orFilter)
           .limit(20)
 
-        if (perfilErr) throw perfilErr
+        console.log('1. Resultado consulta Perfiles:', perfiles)
+        
+        if (perfilErr) {
+          console.error('Error específico en tabla perfil:', perfilErr)
+          throw perfilErr
+        }
+
         if (!perfiles || perfiles.length === 0) {
+          console.warn('Aviso: No se encontraron coincidencias en la tabla Perfil.')
           setResultados([])
           setBuscando(false)
           return
@@ -82,18 +93,17 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
 
         const idsPerfiles = perfiles.map(p => p.id_perfil)
 
-        // 2. CORRECCIÓN: Usamos 'id_paciente' que es la columna en tu SQL que referencia al perfil
         const { data: pacientes, error: pacErr } = await supabase
           .from('paciente')
           .select('id_paciente, tipo_sangre')
           .in('id_paciente', idsPerfiles)
           .is('deleted_at', null)
 
+        console.log('2. Coincidencias en tabla Paciente:', pacientes)
+
         if (pacErr) throw pacErr
 
-        // 3. Unir información
-        const transformados: PacienteResultado[] = pacientes.map(pac => {
-          // Buscamos el perfil usando pac.id_paciente porque son el mismo UUID en tu esquema
+        const transformados: PacienteResultado[] = (pacientes ?? []).map(pac => {
           const perf = perfiles.find(p => p.id_perfil === pac.id_paciente)
           return {
             id_paciente: pac.id_paciente,
@@ -108,20 +118,26 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
           }
         }).filter(item => item.perfil !== null) as PacienteResultado[]
 
-        // 4. Excluir ya asignados
         const { data: yaAsignados, error: asignadosErr } = await supabase
           .from('paciente_fisioterapeuta')
           .select('id_paciente')
           .eq('id_fisioterapeuta', fisioterapeutaId)
           .is('deleted_at', null)
 
+        console.log('3. IDs que ya tienes asignados (se filtrarán):', yaAsignados)
+
         if (asignadosErr) throw asignadosErr
 
         const idsAsignados = new Set((yaAsignados ?? []).map(r => r.id_paciente))
-        setResultados(transformados.filter(p => !idsAsignados.has(p.id_paciente)))
+        const final = transformados.filter(p => !idsAsignados.has(p.id_paciente))
+        
+        console.log('4. Lista final a mostrar:', final)
+        
+        // ACTUALIZACIÓN DE ESTADO: Forzamos la actualización de resultados
+        setResultados([...final])
 
       } catch (err: any) {
-        console.error('Error en búsqueda:', err)
+        console.error('Error fatal en el flujo de búsqueda:', err)
         setError(`Error: ${err.message || 'Error desconocido'}`)
       } finally {
         setBuscando(false)
@@ -145,7 +161,7 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
       })
 
     if (err) {
-      console.error('Error al insertar:', err)
+      console.error('Error al insertar vínculo:', err)
       setError('No se pudo vincular al paciente.')
       setGuardando(false)
     } else {
@@ -165,8 +181,8 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
       onClick={e => { if (e.target === e.currentTarget) onCerrar() }}
     >
       <div style={{
-        background: 'var(--white)', borderRadius: '16px',
-        border: '1px solid var(--border)', width: '500px',
+        background: '#fff', borderRadius: '16px',
+        border: '1px solid #ddd', width: '500px',
         maxWidth: '100%', overflow: 'hidden',
         boxShadow: '0 12px 40px rgba(0,0,0,0.2)',
         display: 'flex', flexDirection: 'column', maxHeight: '90vh',
@@ -174,19 +190,19 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
 
         <div style={{
           padding: '18px 20px 14px',
-          borderBottom: '1px solid var(--border)',
+          borderBottom: '1px solid #eee',
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between'
         }}>
           <div>
-            <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--text)' }}>Agregar paciente</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-light)', marginTop: '3px' }}>
+            <div style={{ fontWeight: 800, fontSize: '16px' }}>Agregar paciente</div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '3px' }}>
               Busca por nombre, apellidos o correo
             </div>
           </div>
           <button onClick={onCerrar} style={{
-            background: 'var(--bg)', border: '1px solid var(--border)',
+            background: '#f5f5f5', border: '1px solid #ddd',
             width: '32px', height: '32px', borderRadius: '50%',
-            cursor: 'pointer', color: 'var(--text-light)'
+            cursor: 'pointer'
           }}>✕</button>
         </div>
 
@@ -201,39 +217,42 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
               onChange={e => { setQuery(e.target.value); setSeleccionado(null); setError(null) }}
               style={{
                 width: '100%', padding: '10px 12px 10px 38px', boxSizing: 'border-box',
-                border: '1.5px solid var(--border)', borderRadius: '10px',
-                fontSize: '14px', background: 'var(--bg)', outline: 'none'
+                border: '1.5px solid #ddd', borderRadius: '10px',
+                fontSize: '14px', outline: 'none'
               }}
             />
           </div>
         </div>
 
-        <div style={{ padding: '4px 20px 8px', overflowY: 'auto', minHeight: '160px', maxHeight: '300px' }}>
+        {/* CONTENEDOR DE LA LISTA: Aseguramos que sea visible y tenga scroll */}
+        <div style={{ padding: '10px 20px', overflowY: 'auto', minHeight: '200px', maxHeight: '400px' }}>
           {query.trim().length < 2 ? (
-            <div style={{ textAlign: 'center', padding: '2.5rem 0', opacity: 0.35, fontSize: '13px' }}>Escribe para buscar...</div>
+            <div style={{ textAlign: 'center', padding: '2.5rem 0', opacity: 0.5, fontSize: '13px' }}>Escribe para buscar...</div>
           ) : buscando ? (
-            <div style={{ textAlign: 'center', padding: '2.5rem 0', opacity: 0.35, fontSize: '13px' }}>Buscando...</div>
+            <div style={{ textAlign: 'center', padding: '2.5rem 0', opacity: 0.5, fontSize: '13px' }}>Buscando...</div>
           ) : resultados.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '2.5rem 0', opacity: 0.35, fontSize: '13px' }}>No se encontraron pacientes nuevos</div>
+            <div style={{ textAlign: 'center', padding: '2.5rem 0', opacity: 0.5, fontSize: '13px' }}>No se encontraron pacientes nuevos</div>
           ) : (
-            resultados.map(pac => (
+            resultados.map((pac) => (
               <div
                 key={pac.id_paciente}
-                onClick={() => setSeleccionado(seleccionado?.id_paciente === pac.id_paciente ? null : pac)}
+                onClick={() => setSeleccionado(pac)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '12px',
-                  padding: '10px 12px', borderRadius: '12px', cursor: 'pointer',
-                  background: seleccionado?.id_paciente === pac.id_paciente ? 'var(--blue-xlight)' : 'transparent',
-                  border: `1.5px solid ${seleccionado?.id_paciente === pac.id_paciente ? 'var(--blue-light)' : 'transparent'}`,
-                  marginBottom: '6px', transition: '.2s'
+                  padding: '12px', borderRadius: '12px', cursor: 'pointer',
+                  background: seleccionado?.id_paciente === pac.id_paciente ? '#eef6ff' : 'transparent',
+                  border: `1.5px solid ${seleccionado?.id_paciente === pac.id_paciente ? '#3b82f6' : 'transparent'}`,
+                  marginBottom: '8px', transition: '0.2s'
                 }}
               >
                 <Avatar nombre={pac.perfil.nombre} size={38} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: '14px' }}>{`${pac.perfil.nombre} ${pac.perfil.primer_apellido}`}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-light)' }}>{pac.perfil.correo_electronico}</div>
+                  <div style={{ fontWeight: 700, fontSize: '14px' }}>
+                    {pac.perfil.nombre} {pac.perfil.primer_apellido}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>{pac.perfil.correo_electronico}</div>
                 </div>
-                {seleccionado?.id_paciente === pac.id_paciente && <span style={{ color: 'var(--blue)', fontWeight: 900 }}>✓</span>}
+                {seleccionado?.id_paciente === pac.id_paciente && <span style={{ color: '#3b82f6', fontWeight: 900 }}>✓</span>}
               </div>
             ))
           )}
@@ -241,18 +260,18 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
 
         {error && <div style={{ margin: '0 20px 10px', color: '#e74c3c', fontSize: '12px', fontWeight: 600 }}>{error}</div>}
 
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: 500 }}>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
             <input 
               type="checkbox" 
               checked={esPrincipal} 
               onChange={e => setEsPrincipal(e.target.checked)} 
-              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              style={{ width: '16px', height: '16px' }}
             />
             Asignar como principal
           </label>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button onClick={onCerrar} style={{ padding: '9px 16px', borderRadius: '8px', border: '1px solid var(--border)', background: 'none', cursor: 'pointer' }}>
+            <button onClick={onCerrar} style={{ padding: '9px 16px', borderRadius: '8px', border: '1px solid #ddd', background: 'none', cursor: 'pointer' }}>
               Cancelar
             </button>
             <button
@@ -260,7 +279,7 @@ export function ModalAgregarPaciente({ fisioterapeutaId, onAgregado, onCerrar }:
               disabled={!seleccionado || guardando}
               style={{
                 padding: '9px 20px', borderRadius: '8px', border: 'none',
-                background: seleccionado ? 'var(--blue)' : '#ccc',
+                background: seleccionado ? '#3b82f6' : '#ccc',
                 color: '#fff', fontWeight: 700, cursor: seleccionado ? 'pointer' : 'not-allowed'
               }}
             >
