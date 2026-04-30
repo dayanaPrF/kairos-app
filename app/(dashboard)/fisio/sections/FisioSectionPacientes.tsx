@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { ModalAgregarPaciente } from './ModalAgregarPaciente'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface Paciente {
@@ -13,7 +14,6 @@ interface Paciente {
   sexo: string
   fecha_nacimiento: string | null
   tipo_sangre: string | null
-  // calculados
   edad: number | null
   rutinaActiva: string | null
   ultimaSesion: string | null
@@ -89,7 +89,6 @@ function usePacientes() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // 1. IDs de pacientes asignados
       const { data: rels } = await supabase
         .from('paciente_fisioterapeuta')
         .select('id_paciente, es_principal')
@@ -101,64 +100,58 @@ function usePacientes() {
       const ids = rels.map(r => r.id_paciente)
       const principalSet = new Set(rels.filter(r => r.es_principal).map(r => r.id_paciente))
 
-      // 2. Perfiles
       const { data: perfiles } = await supabase
         .from('perfil')
         .select('id_perfil, nombre, primer_apellido, segundo_apellido, correo_electronico, numero_telefono, sexo, fecha_nacimiento')
         .in('id_perfil', ids)
 
-      // 3. Datos médicos (tipo_sangre)
       const { data: datosPac } = await supabase
         .from('paciente')
         .select('id_paciente, tipo_sangre')
         .in('id_paciente', ids)
 
-      // 4. Rutinas activas
       const { data: rutinas } = await supabase
         .from('rutina_paciente')
         .select('id_paciente, rutina(nombre_rutina)')
         .in('id_paciente', ids)
         .eq('activa', true)
 
-      // 5. Última sesión
       const { data: sesiones } = await supabase
         .from('sesion_entrenamiento')
         .select('id_paciente, fecha')
         .in('id_paciente', ids)
         .order('fecha', { ascending: false })
 
-      // 6. Diagnósticos vigentes
       const { data: diags } = await supabase
         .from('diagnostico')
         .select('id_paciente, nombre_diagnostico')
         .in('id_paciente', ids)
         .eq('aun_vigente', true)
 
-      // Índices rápidos
-      const mapaMP    = Object.fromEntries((datosPac ?? []).map(p => [p.id_paciente, p]))
-      const mapaRut   = Object.fromEntries((rutinas   ?? []).map(r => [r.id_paciente, (r.rutina as any)?.nombre_rutina ?? null]))
+      const mapaMP  = Object.fromEntries((datosPac ?? []).map(p => [p.id_paciente, p]))
+      const mapaRut = Object.fromEntries((rutinas   ?? []).map(r => [r.id_paciente, (r.rutina as any)?.nombre_rutina ?? null]))
       const mapaUltimaS: Record<string, string> = {}
       for (const s of sesiones ?? []) {
         if (!mapaUltimaS[s.id_paciente]) mapaUltimaS[s.id_paciente] = s.fecha
       }
-      const mapaDiag  = Object.fromEntries((diags ?? []).map(d => [d.id_paciente, d.nombre_diagnostico]))
+      const mapaDiag = Object.fromEntries((diags ?? []).map(d => [d.id_paciente, d.nombre_diagnostico]))
 
       const lista: Paciente[] = (perfiles ?? []).map(p => ({
-        id_paciente:      p.id_perfil,
-        nombre:           p.nombre,
-        primer_apellido:  p.primer_apellido,
-        segundo_apellido: p.segundo_apellido ?? '',
+        id_paciente:        p.id_perfil,
+        nombre:             p.nombre,
+        primer_apellido:    p.primer_apellido,
+        segundo_apellido:   p.segundo_apellido ?? '',
         correo_electronico: p.correo_electronico,
-        numero_telefono:  p.numero_telefono,
-        sexo:             p.sexo ?? '',
-        fecha_nacimiento: p.fecha_nacimiento ?? null,
-        tipo_sangre:      mapaMP[p.id_perfil]?.tipo_sangre ?? null,
-        edad:             calcEdad(p.fecha_nacimiento),
-        rutinaActiva:     mapaRut[p.id_perfil] ?? null,
-        ultimaSesion:     mapaUltimaS[p.id_perfil] ?? null,
-        diasSinSesion:    diasDesde(mapaUltimaS[p.id_perfil] ?? null),
+        numero_telefono:    p.numero_telefono,
+        sexo:               p.sexo ?? '',
+        fecha_nacimiento:   p.fecha_nacimiento ?? null,
+        tipo_sangre:        mapaMP[p.id_perfil]?.tipo_sangre ?? null,
+        edad:               calcEdad(p.fecha_nacimiento),
+        rutinaActiva:       mapaRut[p.id_perfil] ?? null,
+        ultimaSesion:       mapaUltimaS[p.id_perfil] ?? null,
+        diasSinSesion:      diasDesde(mapaUltimaS[p.id_perfil] ?? null),
         diagnosticoVigente: mapaDiag[p.id_perfil] ?? null,
-        esPrincipal:      principalSet.has(p.id_perfil),
+        esPrincipal:        principalSet.has(p.id_perfil),
       }))
 
       setPacientes(lista.sort((a, b) => (a.diasSinSesion ?? 999) - (b.diasSinSesion ?? 999)))
@@ -205,14 +198,25 @@ async function cargarFicha(paciente: Paciente): Promise<FichaData> {
       .limit(1)
       .maybeSingle(),
 
+    // ✅ CORRECCIÓN: query directa a contacto_emergencia via paciente.id_contacto_emergencia
     supabase.from('paciente')
-      .select('contacto_emergencia(nombre, primer_apellido, parentesco, numero_telefono)')
+      .select('id_contacto_emergencia')
       .eq('id_paciente', id)
       .maybeSingle(),
   ])
 
   const rut = rutRes.data
-  const ce  = (contRes.data as any)?.contacto_emergencia
+
+  // ✅ CORRECCIÓN: segunda query separada para el contacto usando el id obtenido
+  let ce = null
+  if (contRes.data?.id_contacto_emergencia) {
+    const { data: contacto } = await supabase
+      .from('contacto_emergencia')
+      .select('nombre, primer_apellido, parentesco, numero_telefono')
+      .eq('id_contacto_emergencia', contRes.data.id_contacto_emergencia)
+      .maybeSingle()
+    ce = contacto
+  }
 
   return {
     paciente,
@@ -238,11 +242,20 @@ async function cargarFicha(paciente: Paciente): Promise<FichaData> {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════════════════
 export function FisioSectionPacientes() {
-  const { pacientes, loading, error } = usePacientes()
-  const [busqueda, setBusqueda]  = useState('')
-  const [filtro, setFiltro]      = useState<'todos' | 'activos' | 'inactivos'>('todos')
-  const [fichaPac, setFichaPac]  = useState<FichaData | null>(null)
+  // ✅ CORRECCIÓN: recargar desestructurado del hook
+  const { pacientes, loading, error, recargar } = usePacientes()
+  const [busqueda, setBusqueda]   = useState('')
+  const [filtro, setFiltro]       = useState<'todos' | 'activos' | 'inactivos'>('todos')
+  const [fichaPac, setFichaPac]   = useState<FichaData | null>(null)
   const [fichaLoading, setFichaLoading] = useState(false)
+  const [modalAbierto, setModalAbierto] = useState(false)
+  const [fisioId, setFisioId]     = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) setFisioId(data.user.id)
+    })
+  }, [])
 
   const abrirFicha = async (pac: Paciente) => {
     setFichaLoading(true)
@@ -257,9 +270,9 @@ export function FisioSectionPacientes() {
     const matchBusqueda = nombre.includes(busqueda.toLowerCase()) ||
       p.correo_electronico?.toLowerCase().includes(busqueda.toLowerCase())
     const matchFiltro =
-      filtro === 'todos'     ? true :
-      filtro === 'activos'   ? (p.diasSinSesion !== null && p.diasSinSesion <= 7) :
-      /* inactivos */          (p.diasSinSesion === null || p.diasSinSesion > 7)
+      filtro === 'todos'    ? true :
+      filtro === 'activos'  ? (p.diasSinSesion !== null && p.diasSinSesion <= 7) :
+      /* inactivos */         (p.diasSinSesion === null || p.diasSinSesion > 7)
     return matchBusqueda && matchFiltro
   })
 
@@ -283,14 +296,19 @@ export function FisioSectionPacientes() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div className="dash-page-title">Mis pacientes</div>
-            <div className="dash-page-sub">{pacientes.length} paciente{pacientes.length !== 1 ? 's' : ''} asignado{pacientes.length !== 1 ? 's' : ''}</div>
+            <div className="dash-page-sub">
+              {pacientes.length} paciente{pacientes.length !== 1 ? 's' : ''} asignado{pacientes.length !== 1 ? 's' : ''}
+            </div>
           </div>
-          <button style={{
-            background: 'var(--blue)', color: '#fff', border: 'none',
-            borderRadius: '10px', padding: '9px 18px',
-            fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: '6px',
-          }}>
+          <button
+            onClick={() => setModalAbierto(true)}
+            style={{
+              background: 'var(--blue)', color: '#fff', border: 'none',
+              borderRadius: '10px', padding: '9px 18px',
+              fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '6px',
+            }}
+          >
             + Agregar paciente
           </button>
         </div>
@@ -339,11 +357,10 @@ export function FisioSectionPacientes() {
             </div>
           ) : (
             <>
-              {/* Encabezado tabla */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: '2fr 1.2fr 1fr 1fr 0.8fr',
-                gap: '0', padding: '10px 18px',
+                padding: '10px 18px',
                 borderBottom: '1px solid var(--border)',
                 background: 'var(--bg)',
               }}>
@@ -354,7 +371,6 @@ export function FisioSectionPacientes() {
                 ))}
               </div>
 
-              {/* Filas */}
               <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 340px)' }}>
                 {filtrados.map(pac => {
                   const act = actividadColor(pac.diasSinSesion)
@@ -366,7 +382,7 @@ export function FisioSectionPacientes() {
                       style={{
                         display: 'grid',
                         gridTemplateColumns: '2fr 1.2fr 1fr 1fr 0.8fr',
-                        gap: '0', padding: '14px 18px',
+                        padding: '14px 18px',
                         borderBottom: '1px solid var(--border)',
                         cursor: 'pointer', transition: '.15s',
                         background: isSelected ? 'var(--blue-xlight)' : 'var(--white)',
@@ -375,7 +391,6 @@ export function FisioSectionPacientes() {
                       onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg)' }}
                       onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = 'var(--white)' }}
                     >
-                      {/* Paciente */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <Avatar nombre={pac.nombre} size={36} />
                         <div>
@@ -396,7 +411,6 @@ export function FisioSectionPacientes() {
                         </div>
                       </div>
 
-                      {/* Diagnóstico */}
                       <div style={{ fontSize: '12.5px', color: 'var(--text-mid)' }}>
                         {pac.diagnosticoVigente
                           ? <span title={pac.diagnosticoVigente}>
@@ -408,18 +422,18 @@ export function FisioSectionPacientes() {
                         }
                       </div>
 
-                      {/* Rutina */}
                       <div style={{ fontSize: '12.5px', color: 'var(--text-mid)' }}>
                         {pac.rutinaActiva
                           ? <span style={{
                               background: 'var(--lime-light)', color: 'var(--lime-dark)',
                               padding: '3px 8px', borderRadius: '20px', fontSize: '11.5px', fontWeight: 600,
-                            }}>{pac.rutinaActiva.length > 18 ? pac.rutinaActiva.slice(0, 16) + '…' : pac.rutinaActiva}</span>
+                            }}>
+                              {pac.rutinaActiva.length > 18 ? pac.rutinaActiva.slice(0, 16) + '…' : pac.rutinaActiva}
+                            </span>
                           : <span style={{ opacity: 0.4, fontStyle: 'italic', fontSize: '12px' }}>Sin rutina</span>
                         }
                       </div>
 
-                      {/* Última sesión */}
                       <div>
                         <span style={{
                           background: act.bg, color: act.color,
@@ -430,7 +444,6 @@ export function FisioSectionPacientes() {
                         </span>
                       </div>
 
-                      {/* Acción */}
                       <div style={{ textAlign: 'right' }}>
                         <span style={{
                           color: isSelected ? 'var(--blue)' : 'var(--text-light)',
@@ -464,6 +477,15 @@ export function FisioSectionPacientes() {
           ) : null}
         </div>
       )}
+
+      {/* ✅ CORRECCIÓN: Modal con recargar conectado */}
+      {modalAbierto && fisioId && (
+        <ModalAgregarPaciente
+          fisioterapeutaId={fisioId}
+          onAgregado={() => recargar()}
+          onCerrar={() => setModalAbierto(false)}
+        />
+      )}
     </div>
   )
 }
@@ -481,7 +503,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
 
   return (
     <>
-      {/* Header de la ficha */}
       <div className="dash-card" style={{ marginBottom: 0, padding: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -505,7 +526,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
           }}>✕</button>
         </div>
 
-        {/* Datos de contacto */}
         <div style={{
           background: 'var(--bg)', borderRadius: '8px', padding: '10px 12px',
           display: 'flex', flexDirection: 'column', gap: '5px',
@@ -523,7 +543,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
           )}
         </div>
 
-        {/* Botones de acción */}
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
           <button style={{
             flex: 1, padding: '8px', borderRadius: '8px',
@@ -539,7 +558,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
         </div>
       </div>
 
-      {/* Próxima cita */}
       {proximaCita && (
         <div className="dash-card" style={{ marginBottom: 0, padding: '14px', background: 'var(--blue-xlight)', border: '1px solid var(--blue-light)' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '8px' }}>
@@ -565,7 +583,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
         </div>
       )}
 
-      {/* Rutina activa */}
       {rutina && (
         <div className="dash-card" style={{ marginBottom: 0, padding: '14px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '8px' }}>
@@ -583,16 +600,12 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
         </div>
       )}
 
-      {/* Tabs info / sesiones / diagnósticos */}
       <div className="dash-card" style={{ marginBottom: 0, padding: '0', overflow: 'hidden' }}>
-        {/* Tab header */}
-        <div style={{
-          display: 'flex', borderBottom: '1px solid var(--border)',
-        }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
           {([
-            { key: 'info',         label: '📋 Info'        },
-            { key: 'sesiones',     label: '📆 Sesiones'    },
-            { key: 'diagnosticos', label: '🩺 Diagnósticos' },
+            { key: 'info',         label: '📋 Info'         },
+            { key: 'sesiones',     label: '📆 Sesiones'     },
+            { key: 'diagnosticos', label: '🩺 Diagnósticos'  },
           ] as const).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)} style={{
               flex: 1, padding: '10px 4px', border: 'none', background: 'none',
@@ -607,8 +620,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
         </div>
 
         <div style={{ padding: '14px' }}>
-
-          {/* TAB: Info general */}
           {tab === 'info' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {contactoEmergencia ? (
@@ -632,7 +643,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
             </div>
           )}
 
-          {/* TAB: Sesiones recientes */}
           {tab === 'sesiones' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {sesiones.length === 0 ? (
@@ -646,10 +656,7 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
                     display: 'flex', alignItems: 'center', gap: '10px',
                     padding: '8px 10px', borderRadius: '8px', background: 'var(--bg)',
                   }}>
-                    <div style={{
-                      width: '8px', height: '8px', borderRadius: '50%',
-                      background: sc.color, flexShrink: 0,
-                    }} />
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: sc.color, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text)' }}>
                         {fmtFecha(s.fecha)}
@@ -672,7 +679,6 @@ function Ficha({ data, onCerrar }: { data: FichaData; onCerrar: () => void }) {
             </div>
           )}
 
-          {/* TAB: Diagnósticos */}
           {tab === 'diagnosticos' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {diagnosticos.length === 0 ? (
