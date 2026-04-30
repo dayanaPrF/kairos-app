@@ -56,49 +56,51 @@ export default function FisioDashPage() {
     setNotifCount(count ?? 0)
   }, [])
 
-  // 3. Inicialización y Tiempo Real
+  // 3. Inicialización y Tiempo Rea
   useEffect(() => {
-    let globalChannel: any
+    // 1. Creamos una referencia al canal fuera de la función async
+    // Usamos un nombre genérico o basado en el tiempo para evitar colisiones
+    const channelName = `db-changes-${Math.random().toString(36).substring(7)}`;
+    const channel = supabase.channel(channelName);
 
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      setUserId(user.id)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      setUserId(user.id);
 
-      // Carga inicial de datos
+      // Carga inicial
       const { data: perfil } = await supabase
         .from('perfil')
         .select('nombre')
         .eq('id_perfil', user.id)
-        .maybeSingle()
+        .maybeSingle();
       
-      if (perfil?.nombre) setUserName(perfil.nombre)
-      
-      refreshNotifCount(user.id)
-      refreshUnreadMessages(user.id)
+      if (perfil?.nombre) setUserName(perfil.nombre);
+      refreshNotifCount(user.id);
+      refreshUnreadMessages(user.id);
 
-      // SUSCRIPCIÓN REALTIME
-      globalChannel = supabase
-        .channel('dashboard-realtime-v2')
+      // 2. Configuramos el canal que ya creamos arriba
+      channel
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'mensaje' }, 
-          (payload) => {
-            // Cuando hay CUALQUIER cambio (nuevo mensaje o mensaje marcado como leido)
-            refreshUnreadMessages(user.id)
-          }
+          () => refreshUnreadMessages(user.id)
         )
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'notificacion' }, 
           () => refreshNotifCount(user.id)
         )
-        .subscribe()
-    }
+        .subscribe();
+    };
 
-    init()
-    return () => { if (globalChannel) supabase.removeChannel(globalChannel) }
-  }, [refreshNotifCount, refreshUnreadMessages])
+    init();
+
+    // 3. Limpieza: Removemos el canal específico que creamos en este renderizado
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refreshNotifCount, refreshUnreadMessages]);
 
   const todayStr = new Date().toLocaleDateString('es-MX', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
