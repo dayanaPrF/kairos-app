@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { ModalAgregarPaciente } from './ModalAgregarPaciente'
-import { ModalGestionDiagnosticos } from './ModalGestionDiagnosticos' //[cite: 5]
+import { ModalGestionDiagnosticos } from './ModalGestionDiagnosticos'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface Paciente {
@@ -109,6 +109,7 @@ function usePacientes() {
         .select('id_paciente, rutina(nombre_rutina)')
         .in('id_paciente', ids)
         .eq('activa', true)
+        .is('deleted_at', null)
 
       const { data: sesiones } = await supabase
         .from('sesion_entrenamiento')
@@ -157,16 +158,47 @@ function usePacientes() {
     }
   }, [])
 
+  // Función eliminar mejorada con borrado lógico de diagnósticos y rutinas[cite: 6, 7]
   const eliminar = async (idPaciente: string) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const confirmar = window.confirm('¿Estás seguro de eliminar al paciente? Se conservará su historial clínico pero ya no aparecerá en tu lista activa.')
+    
+    const confirmar = window.confirm('¿Estás seguro de eliminar al paciente? Se ocultarán sus diagnósticos y rutinas actuales.')
     if (!confirmar) return
+
     try {
       const timestamp = new Date().toISOString()
-      await supabase.from('paciente_fisioterapeuta').update({ deleted_at: timestamp }).eq('id_fisioterapeuta', user.id).eq('id_paciente', idPaciente)
+
+      // 1. Marcar relación paciente-fisioterapeuta como eliminada[cite: 7]
+      await supabase
+        .from('paciente_fisioterapeuta')
+        .update({ deleted_at: timestamp })
+        .eq('id_fisioterapeuta', user.id)
+        .eq('id_paciente', idPaciente)
+
+      // 2. Marcar diagnósticos vigentes como eliminados/no vigentes[cite: 6]
+      await supabase
+        .from('diagnostico')
+        .update({ 
+          deleted_at: timestamp,
+          aun_vigente: false 
+        })
+        .eq('id_paciente', idPaciente)
+        .eq('id_fisioterapeuta', user.id)
+
+      // 3. Desactivar rutinas activas[cite: 7]
+      await supabase
+        .from('rutina_paciente')
+        .update({ 
+          deleted_at: timestamp,
+          activa: false 
+        })
+        .eq('id_paciente', idPaciente)
+
       await cargar()
-    } catch (err: any) { alert(err.message) }
+    } catch (err: any) { 
+      alert("Error al procesar la baja: " + err.message) 
+    }
   }
 
   useEffect(() => { cargar() }, [cargar])
@@ -177,12 +209,8 @@ function usePacientes() {
 export function FisioSectionPacientes() {
   const { pacientes, loading, error, recargar, eliminar } = usePacientes()
   const [busqueda, setBusqueda] = useState('')
-  const [fichaPac, setFichaPac] = useState<FichaData | null>(null)
-  const [fichaLoading, setFichaLoading] = useState(false)
   const [modalAbierto, setModalAbierto] = useState(false)
   const [fisioId, setFisioId] = useState<string | null>(null)
-
-  // Estado para gestionar el modal de diagnóstico[cite: 5]
   const [pacienteParaDiag, setPacienteParaDiag] = useState<{id: string, nombre: string} | null>(null)
 
   useEffect(() => {
@@ -235,7 +263,6 @@ export function FisioSectionPacientes() {
                   <div>{pac.rutinaActiva ? <span style={{ fontSize: '11.5px' }}>✅ {pac.rutinaActiva}</span> : <span style={{ opacity: 0.4 }}>—</span>}</div>
                   <div><span style={{ background: act.bg, color: act.color, padding: '3px 9px', borderRadius: '20px', fontSize: '11.5px' }}>{act.label}</span></div>
                   
-                  {/* Acciones Actualizadas[cite: 5] */}
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px' }}>
                     <button 
                       onClick={() => setPacienteParaDiag({ id: pac.id_paciente, nombre: pac.nombre })}
@@ -255,7 +282,7 @@ export function FisioSectionPacientes() {
         </div>
       </div>
 
-      {/* MODAL DE GESTIÓN DE DIAGNÓSTICOS[cite: 5] */}
+      {/* MODALES */}
       {pacienteParaDiag && fisioId && (
         <ModalGestionDiagnosticos 
           pacienteId={pacienteParaDiag.id} 
@@ -263,12 +290,18 @@ export function FisioSectionPacientes() {
           fisioId={fisioId} 
           onCerrar={() => {
             setPacienteParaDiag(null)
-            recargar() // Recarga la tabla para mostrar el diagnóstico actualizado
+            recargar()
           }} 
         />
       )}
 
-      {modalAbierto && fisioId && <ModalAgregarPaciente fisioterapeutaId={fisioId} onAgregado={recargar} onCerrar={() => setModalAbierto(false)} />}
+      {modalAbierto && fisioId && (
+        <ModalAgregarPaciente 
+          fisioterapeutaId={fisioId} 
+          onAgregado={recargar} 
+          onCerrar={() => setModalAbierto(false)} 
+        />
+      )}
     </div>
   )
 }
