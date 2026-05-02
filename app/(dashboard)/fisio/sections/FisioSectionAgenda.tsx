@@ -83,7 +83,6 @@ function useAgendaData() {
   const [loading, setLoading]       = useState(true)
 
   const cargarCitas = useCallback(async (uid: string) => {
-    // Citas de los próximos 60 días y últimos 30
     const desde = toISO(addDias(new Date(), -30))
     const hasta = toISO(addDias(new Date(), 60))
 
@@ -98,7 +97,6 @@ function useAgendaData() {
 
     if (!citasRaw?.length) { setCitas([]); return }
 
-    // Nombres de pacientes
     const pacIds = [...new Set(citasRaw.map(c => c.id_paciente))]
     const { data: perfiles } = await supabase
       .from('perfil')
@@ -109,7 +107,6 @@ function useAgendaData() {
       (perfiles ?? []).map(p => [p.id_perfil, `${p.nombre} ${p.primer_apellido}`])
     )
 
-    // Nombres de clínicas
     const clinIds = [...new Set(citasRaw.map(c => c.id_clinica).filter(Boolean))]
     let mapaC: Record<string, string> = {}
     if (clinIds.length) {
@@ -135,7 +132,6 @@ function useAgendaData() {
       if (!user) return
       setFisioId(user.id)
 
-      // Clínicas del fisio
       const { data: relClin } = await supabase
         .from('clinica_fisioterapeuta')
         .select('clinica(id_clinica, nombre_clinica)')
@@ -146,7 +142,6 @@ function useAgendaData() {
         .filter(Boolean)
       setClinicas(cls)
 
-      // Pacientes asignados
       const { data: relPac } = await supabase
         .from('paciente_fisioterapeuta')
         .select('id_paciente')
@@ -165,7 +160,6 @@ function useAgendaData() {
         })))
       }
 
-      // Horarios de atención
       const { data: hors } = await supabase
         .from('horario_atencion')
         .select('id_horario_atencion, dia_semana, hora_inicio, hora_cierre, id_clinica, clinica(nombre_clinica)')
@@ -351,6 +345,10 @@ export function FisioSectionAgenda() {
     new Date(mesBase.anio, mesBase.mes, i + 1)
   )
 
+  // Total de filas necesarias en el grid del mes
+  const totalCeldas  = offsetInicio + diasMes.length
+  const totalFilas   = Math.ceil(totalCeldas / 7)
+
   const citasDelDia = (iso: string) => citas.filter(c => c.fecha_cita === iso && c.estado_cita !== 'cancelada')
 
   return (
@@ -488,11 +486,21 @@ export function FisioSectionAgenda() {
 
       {/* ── VISTA MES ── */}
       {vista === 'mes' && (
-        <div className="dash-card" style={{ padding: 0, overflow: 'hidden', marginBottom: 0, flex: 1 }}>
+        <div className="dash-card" style={{
+          padding: 0,
+          overflow: 'hidden',
+          marginBottom: 0,
+          flex: 1,
+          // FIX: flex column para que el grid interno pueda crecer y llenar el espacio
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0, // permite que flex shrink funcione correctamente con zoom
+        }}>
           {/* Navegación */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '12px 18px', borderBottom: '1px solid var(--border)',
+            flexShrink: 0, // no se comprime
           }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               <NavBtn onClick={prevMes}>‹</NavBtn>
@@ -511,7 +519,11 @@ export function FisioSectionAgenda() {
           </div>
 
           {/* Header días semana */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)',
+            background: 'var(--bg)', borderBottom: '1px solid var(--border)',
+            flexShrink: 0, // no se comprime
+          }}>
             {['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d => (
               <div key={d} style={{ padding: '8px', textAlign: 'center', fontSize: '11px', fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 {d}
@@ -519,11 +531,25 @@ export function FisioSectionAgenda() {
             ))}
           </div>
 
-          {/* Grid días del mes */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {/* Grid días del mes — FIX PRINCIPAL */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(7, 1fr)',
+            // Filas equitativas que llenan el espacio disponible sin desbordarse
+            gridTemplateRows: `repeat(${totalFilas}, 1fr)`,
+            flex: 1,       // ocupa todo el espacio restante del flex parent
+            minHeight: 0,  // crítico: sin esto el grid ignora el flex shrink con zoom
+            overflow: 'hidden',
+          }}>
             {/* Celdas vacías del inicio */}
             {Array.from({ length: offsetInicio }).map((_, i) => (
-              <div key={`e-${i}`} style={{ minHeight: '90px', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--bg)', opacity: 0.4 }} />
+              <div key={`e-${i}`} style={{
+                borderRight: '1px solid var(--border)',
+                borderBottom: '1px solid var(--border)',
+                background: 'var(--bg)',
+                opacity: 0.4,
+                minHeight: 0, // FIX: quita el minHeight fijo
+              }} />
             ))}
             {/* Días del mes */}
             {diasMes.map((d, idx) => {
@@ -533,11 +559,14 @@ export function FisioSectionAgenda() {
               const colIdx   = (offsetInicio + idx) % 7
               return (
                 <div key={iso} onClick={() => abrirNueva(iso)} style={{
-                  minHeight: '90px', padding: '6px',
+                  // FIX: sin minHeight fijo — el grid controla la altura con gridTemplateRows
+                  minHeight: 0,
+                  padding: '6px',
                   borderRight: colIdx < 6 ? '1px solid var(--border)' : 'none',
                   borderBottom: '1px solid var(--border)',
                   background: esHoy ? 'var(--blue-xlight)' : 'var(--white)',
                   cursor: 'pointer', transition: '.15s',
+                  overflow: 'hidden', // evita que el contenido desborde la celda
                 }}
                   onMouseEnter={e => { if (!esHoy) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg)' }}
                   onMouseLeave={e => { if (!esHoy) (e.currentTarget as HTMLDivElement).style.background = 'var(--white)' }}
@@ -549,6 +578,7 @@ export function FisioSectionAgenda() {
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: '12px', fontWeight: esHoy ? 900 : 600,
                       color: esHoy ? '#fff' : 'var(--text)',
+                      flexShrink: 0,
                     }}>{d.getDate()}</span>
                     {citasD.length > 0 && (
                       <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--blue)', background: 'var(--blue-xlight)', borderRadius: '10px', padding: '1px 6px' }}>
@@ -563,6 +593,7 @@ export function FisioSectionAgenda() {
                         background: es.bg, borderLeft: `2px solid ${es.color}`,
                         borderRadius: '4px', padding: '2px 5px', marginBottom: '2px',
                         fontSize: '10.5px', fontWeight: 600, color: es.color, cursor: 'pointer',
+                        overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                       }}>
                         {c.hora_inicio} {c.paciente_nombre.split(' ')[0]}
                       </div>
@@ -695,7 +726,6 @@ export function FisioSectionAgenda() {
             <ModalHeader title={modalMode === 'nueva' ? 'Nueva cita' : 'Editar cita'} onClose={() => setModalMode(null)} />
             <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
-              {/* Paciente */}
               <FormField label="Paciente *">
                 <select value={citaForm.id_paciente} onChange={e => setCitaForm(f => ({ ...f, id_paciente: e.target.value }))} style={inputStyle}>
                   <option value="">Selecciona un paciente...</option>
@@ -703,12 +733,10 @@ export function FisioSectionAgenda() {
                 </select>
               </FormField>
 
-              {/* Fecha */}
               <FormField label="Fecha *">
                 <input type="date" value={citaForm.fecha_cita} onChange={e => setCitaForm(f => ({ ...f, fecha_cita: e.target.value }))} style={inputStyle} />
               </FormField>
 
-              {/* Horas */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <FormField label="Hora inicio *">
                   <input type="time" value={citaForm.hora_inicio} onChange={e => setCitaForm(f => ({ ...f, hora_inicio: e.target.value }))} style={inputStyle} />
@@ -718,12 +746,10 @@ export function FisioSectionAgenda() {
                 </FormField>
               </div>
 
-              {/* Motivo */}
               <FormField label="Motivo *">
                 <input type="text" placeholder="Ej. Sesión de seguimiento..." value={citaForm.motivo_cita} onChange={e => setCitaForm(f => ({ ...f, motivo_cita: e.target.value }))} style={inputStyle} />
               </FormField>
 
-              {/* Estado */}
               <FormField label="Estado">
                 <select value={citaForm.estado_cita} onChange={e => setCitaForm(f => ({ ...f, estado_cita: e.target.value }))} style={inputStyle}>
                   <option value="pendiente">Pendiente</option>
@@ -733,7 +759,6 @@ export function FisioSectionAgenda() {
                 </select>
               </FormField>
 
-              {/* Clínica */}
               {clinicas.length > 0 && (
                 <FormField label="Clínica">
                   <select value={citaForm.id_clinica} onChange={e => setCitaForm(f => ({ ...f, id_clinica: e.target.value }))} style={inputStyle}>
@@ -743,7 +768,6 @@ export function FisioSectionAgenda() {
                 </FormField>
               )}
 
-              {/* Notas */}
               <FormField label="Notas">
                 <textarea
                   placeholder="Observaciones para el paciente..."

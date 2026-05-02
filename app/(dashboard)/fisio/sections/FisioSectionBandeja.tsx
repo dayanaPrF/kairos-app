@@ -66,26 +66,37 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
 }
 
-export function FisioSectionBandeja() {
-  const [myId, setMyId] = useState<string | null>(null)
+/* ── Props ── */
+interface FisioSectionBandejaProps {
+  initialPacienteId?: string
+}
+
+export function FisioSectionBandeja({ initialPacienteId }: FisioSectionBandejaProps) {
+  const [myId, setMyId]                   = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
-  const [selected, setSelected] = useState<Conversation | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
+  const [selected, setSelected]           = useState<Conversation | null>(null)
+  const [messages, setMessages]           = useState<Message[]>([])
+  const [input, setInput]                 = useState('')
+  const [search, setSearch]               = useState('')
+  const [loading, setLoading]             = useState(true)
+  const [sending, setSending]             = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const realtimeRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const inputRef       = useRef<HTMLTextAreaElement>(null)
+  const realtimeRef    = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
+  // pendingSelectRef: id que queremos abrir automáticamente
+  const pendingSelectRef = useRef<string | null>(initialPacienteId ?? null)
+  const autoSelectedRef  = useRef(false)
+
+  /* ── Auth ── */
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) setMyId(user.id)
     })
   }, [])
 
+  /* ── Carga de conversaciones ── */
   const loadConversations = useCallback(async (userId: string) => {
     setLoading(true)
     try {
@@ -121,7 +132,7 @@ export function FisioSectionBandeja() {
 
       const convs: Conversation[] = await Promise.all(
         pacienteIds.map(async (pId) => {
-          const chat = chats?.find(c => c.id_paciente === pId)
+          const chat   = chats?.find(c => c.id_paciente === pId)
           const nombre = perfilMap[pId] ?? 'Paciente'
 
           if (!chat) {
@@ -167,6 +178,19 @@ export function FisioSectionBandeja() {
 
       convs.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime())
       setConversations(convs)
+
+      // Auto-selección dentro de loadConversations: aquí convs está 100% listo
+      if (pendingSelectRef.current && !autoSelectedRef.current) {
+        const target = convs.find(c => c.id_paciente === pendingSelectRef.current)
+        if (target) {
+          setSelected(target)
+          autoSelectedRef.current  = true
+          pendingSelectRef.current = null
+        }
+      }
+
+      // Devolvemos convs para poder usarlo en el caso de componente ya montado
+      return convs
     } finally {
       setLoading(false)
     }
@@ -176,7 +200,34 @@ export function FisioSectionBandeja() {
     if (myId) loadConversations(myId)
   }, [myId, loadConversations])
 
-  // MARCAR COMO LEÍDO AL SELECCIONAR O RECIBIR
+  // ── CASO CRÍTICO: componente ya montado, solo cambia initialPacienteId ──────
+  // Cuando el usuario navega desde Home → Mensajes y el componente NO se desmonta,
+  // myId no cambia, así que loadConversations no se re-ejecuta.
+  // Este efecto lo detecta y hace la selección directamente en el estado existente,
+  // o fuerza una recarga si las conversaciones aún no cargaron.
+  useEffect(() => {
+    if (!initialPacienteId) return
+
+    // Actualizamos la ref para que loadConversations lo use si aún está corriendo
+    pendingSelectRef.current = initialPacienteId
+    autoSelectedRef.current  = false
+
+    // Si ya tenemos conversaciones cargadas, seleccionamos directamente
+    // (el setConversations ya corrió, no hay race condition aquí)
+    setConversations(prev => {
+      if (prev.length > 0) {
+        const target = prev.find(c => c.id_paciente === initialPacienteId)
+        if (target) {
+          setSelected(target)
+          autoSelectedRef.current  = true
+          pendingSelectRef.current = null
+        }
+      }
+      return prev // no mutamos el estado, solo leemos
+    })
+  }, [initialPacienteId])
+
+  /* ── Marcar como leído ── */
   const markAsRead = async (chatId: string, userId: string) => {
     await supabase
       .from('mensaje')
@@ -186,6 +237,7 @@ export function FisioSectionBandeja() {
       .neq('id_perfil_emisor', userId)
   }
 
+  /* ── Carga de mensajes ── */
   const loadMessages = useCallback(async (conv: Conversation, userId: string) => {
     if (!conv.id_chat) { setMessages([]); return }
 
@@ -199,7 +251,6 @@ export function FisioSectionBandeja() {
       .order('fecha_envio', { ascending: true })
 
     setMessages(data ?? [])
-
     setConversations(prev =>
       prev.map(c => c.id_chat === conv.id_chat ? { ...c, unread_count: 0 } : c)
     )
@@ -209,35 +260,35 @@ export function FisioSectionBandeja() {
     if (selected && myId) loadMessages(selected, myId)
   }, [selected, myId, loadMessages])
 
-  // TIEMPO REAL: ESCUCHA DE MENSAJES EN CHAT ABIERTO
+  /* ── Tiempo real ── */
   useEffect(() => {
     if (!selected?.id_chat || !myId) return
-    
+
     realtimeRef.current?.unsubscribe()
-    
+
     const channel = supabase
       .channel(`chat:${selected.id_chat}`)
-      .on('postgres_changes', 
+      .on(
+        'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'mensaje', filter: `id_chat=eq.${selected.id_chat}` },
         async (payload) => {
           const newMsg = payload.new as Message
-          
           setMessages(prev => {
             if (prev.some(m => m.id_mensaje === newMsg.id_mensaje)) return prev
             return [...prev, newMsg]
           })
-
-          // Si el mensaje viene del paciente, lo marcamos como leído ipso facto
           if (newMsg.id_perfil_emisor !== myId) {
             await markAsRead(selected.id_chat, myId)
           }
         }
-      ).subscribe()
-      
+      )
+      .subscribe()
+
     realtimeRef.current = channel
     return () => { channel.unsubscribe() }
   }, [selected?.id_chat, myId])
 
+  /* ── Enviar mensaje ── */
   const handleSend = async () => {
     if (!input.trim() || !myId || !selected || sending) return
     const texto = input.trim()
@@ -247,16 +298,37 @@ export function FisioSectionBandeja() {
     try {
       let chatId = selected.id_chat
       if (!chatId) {
-        const { data: newChat } = await supabase.from('chat').insert({ id_fisioterapeuta: myId, id_paciente: selected.id_paciente }).select('id_chat').single()
+        const { data: newChat } = await supabase
+          .from('chat')
+          .insert({ id_fisioterapeuta: myId, id_paciente: selected.id_paciente })
+          .select('id_chat')
+          .single()
         chatId = newChat?.id_chat ?? ''
         setSelected(prev => prev ? { ...prev, id_chat: chatId } : prev)
       }
 
-      const { data: newMsg } = await supabase.from('mensaje').insert({ id_chat: chatId, id_perfil_emisor: myId, contenido: texto, tipo_contenido: 'texto', leido: false, fecha_envio: new Date().toISOString() }).select('*').single()
-      
+      const { data: newMsg } = await supabase
+        .from('mensaje')
+        .insert({
+          id_chat: chatId,
+          id_perfil_emisor: myId,
+          contenido: texto,
+          tipo_contenido: 'texto',
+          leido: false,
+          fecha_envio: new Date().toISOString(),
+        })
+        .select('*')
+        .single()
+
       if (newMsg) {
         setMessages(prev => [...prev, newMsg])
-        setConversations(prev => prev.map(c => c.id_chat === chatId ? { ...c, last_message: texto, last_message_at: newMsg.fecha_envio } : c))
+        setConversations(prev =>
+          prev.map(c =>
+            c.id_chat === chatId
+              ? { ...c, last_message: texto, last_message_at: newMsg.fecha_envio }
+              : c
+          )
+        )
       }
     } finally {
       setSending(false)
@@ -264,14 +336,21 @@ export function FisioSectionBandeja() {
     }
   }
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  /* ── Scroll al último mensaje ── */
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
-  const filtered = conversations.filter(c => c.paciente_nombre.toLowerCase().includes(search.toLowerCase()))
+  const filtered = conversations.filter(c =>
+    c.paciente_nombre.toLowerCase().includes(search.toLowerCase())
+  )
   const grouped = selected ? groupByDate(messages) : []
 
+  /* ── Render ── */
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 120px)', background: 'var(--color-background-primary)', borderRadius: '16px', overflow: 'hidden', border: '0.5px solid var(--color-border-tertiary)', boxShadow: '0 2px 24px rgba(0,0,0,0.06)' }}>
-      {/* Sidebar de Chats */}
+
+      {/* ── Sidebar ── */}
       <div style={{ width: '300px', minWidth: '260px', display: 'flex', flexDirection: 'column', borderRight: '0.5px solid var(--color-border-tertiary)' }}>
         <div style={{ padding: '20px 16px 12px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
           <div style={{ fontSize: '17px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '12px' }}>Mensajes</div>
@@ -287,8 +366,14 @@ export function FisioSectionBandeja() {
           {filtered.map(conv => {
             const isActive = selected?.id_paciente === conv.id_paciente
             return (
-              <button key={conv.id_paciente} onClick={() => setSelected(conv)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '11px', padding: '11px 14px', border: 'none', background: isActive ? 'var(--color-background-info)' : 'transparent', borderLeft: isActive ? '3px solid #1A73E8' : '3px solid transparent', cursor: 'pointer', textAlign: 'left' }}>
-                <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: isActive ? '#1A73E8' : '#E8F4FD', color: isActive ? '#fff' : '#1A6FAA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 }}>{conv.paciente_avatar}</div>
+              <button
+                key={conv.id_paciente}
+                onClick={() => setSelected(conv)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '11px', padding: '11px 14px', border: 'none', background: isActive ? 'var(--color-background-info)' : 'transparent', borderLeft: isActive ? '3px solid #1A73E8' : '3px solid transparent', cursor: 'pointer', textAlign: 'left' }}
+              >
+                <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: isActive ? '#1A73E8' : '#E8F4FD', color: isActive ? '#fff' : '#1A6FAA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 }}>
+                  {conv.paciente_avatar}
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
                     <span style={{ fontSize: '13px', fontWeight: conv.unread_count > 0 ? 700 : 500, color: 'var(--color-text-primary)' }}>{conv.paciente_nombre}</span>
@@ -296,7 +381,9 @@ export function FisioSectionBandeja() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{conv.last_message}</span>
-                    {conv.unread_count > 0 && <span style={{ background: '#1A73E8', color: '#fff', borderRadius: '12px', padding: '1px 7px', fontSize: '10px', fontWeight: 700 }}>{conv.unread_count}</span>}
+                    {conv.unread_count > 0 && (
+                      <span style={{ background: '#1A73E8', color: '#fff', borderRadius: '12px', padding: '1px 7px', fontSize: '10px', fontWeight: 700 }}>{conv.unread_count}</span>
+                    )}
                   </div>
                 </div>
               </button>
@@ -305,24 +392,29 @@ export function FisioSectionBandeja() {
         </div>
       </div>
 
-      {/* Ventana de Chat */}
+      {/* ── Panel de chat ── */}
       {!selected ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
-           <div style={{ fontSize: '3rem' }}>💬</div>
-           <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>Selecciona un paciente para comenzar</div>
+          <div style={{ fontSize: '3rem' }}>💬</div>
+          <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>Selecciona un paciente para comenzar</div>
         </div>
       ) : (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f9f9f9' }}>
+
+          {/* Header */}
           <div style={{ padding: '13px 18px', background: '#fff', borderBottom: '0.5px solid var(--color-border-tertiary)', display: 'flex', alignItems: 'center', gap: '11px' }}>
-            <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#E8F4FD', color: '#1A6FAA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}>{selected.paciente_avatar}</div>
+            <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#E8F4FD', color: '#1A6FAA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}>
+              {selected.paciente_avatar}
+            </div>
             <div style={{ fontSize: '14px', fontWeight: 600 }}>{selected.paciente_nombre}</div>
           </div>
-          
+
+          {/* Mensajes */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px' }}>
             {grouped.map(group => (
               <div key={group.label}>
                 <div style={{ textAlign: 'center', margin: '20px 0', fontSize: '11px', color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{group.label}</div>
-                {group.messages.map((msg) => {
+                {group.messages.map(msg => {
                   const isMe = msg.id_perfil_emisor === myId
                   return (
                     <div key={msg.id_mensaje} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', marginBottom: '10px' }}>
@@ -338,6 +430,7 @@ export function FisioSectionBandeja() {
             <div ref={messagesEndRef} />
           </div>
 
+          {/* Input */}
           <div style={{ padding: '16px', background: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px', alignItems: 'center' }}>
             <textarea
               ref={inputRef}
@@ -347,10 +440,14 @@ export function FisioSectionBandeja() {
               placeholder="Escribe un mensaje..."
               style={{ flex: 1, borderRadius: '24px', padding: '12px 18px', border: '1px solid #ddd', resize: 'none', height: '45px', outline: 'none', fontSize: '14px' }}
             />
-            <button onClick={handleSend} style={{ background: '#1A73E8', color: '#fff', border: 'none', borderRadius: '50%', width: '42px', height: '42px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+            <button
+              onClick={handleSend}
+              style={{ background: '#1A73E8', color: '#fff', border: 'none', borderRadius: '50%', width: '42px', height: '42px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}
+            >
               {sending ? '...' : '➤'}
             </button>
           </div>
+
         </div>
       )}
     </div>

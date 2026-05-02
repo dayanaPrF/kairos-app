@@ -14,29 +14,40 @@ import { SectionBandeja } from './sections/SectionBandeja'
 
 type Section = 'home' | 'rutina' | 'citas' | 'progreso' | 'notificaciones' | 'bandeja'
 
+// ─── Saludo según hora del día ────────────────────────────────────────────────
+function getSaludo(): string {
+  const hora = new Date().getHours()
+  if (hora >= 6 && hora < 12)  return 'Buenos días'
+  if (hora >= 12 && hora < 20) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+function getSaludoEmoji(): string {
+  const hora = new Date().getHours()
+  if (hora >= 6 && hora < 12)  return '☀️'
+  if (hora >= 12 && hora < 20) return '🌤️'
+  return '🌙'
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 export default function PacientePage() {
-  const [userName, setUserName] = useState('Paciente')
+  const [userName, setUserName]           = useState('Paciente')
   const [activeSection, setActiveSection] = useState<Section>('home')
-  const [notifCount, setNotifCount] = useState(0)
+  const [notifCount, setNotifCount]       = useState(0)
   const [unreadMessages, setUnreadMessages] = useState(0)
 
-  // Cuenta mensajes no leídos enviados por fisioterapeutas al paciente
+  // ── Mensajes no leídos ──────────────────────────────────────────────────────
   const refreshUnreadMessages = async (userId: string) => {
-    // 1. Obtener todos los chats del paciente
     const { data: chats } = await supabase
       .from('chat')
       .select('id_chat')
       .eq('id_paciente', userId)
       .is('deleted_at', null)
 
-    if (!chats?.length) {
-      setUnreadMessages(0)
-      return
-    }
+    if (!chats?.length) { setUnreadMessages(0); return }
 
     const chatIds = chats.map(c => c.id_chat)
 
-    // 2. Contar mensajes no leídos en esos chats donde el emisor NO es el paciente
     const { count } = await supabase
       .from('mensaje')
       .select('id_mensaje', { count: 'exact', head: true })
@@ -48,12 +59,25 @@ export default function PacientePage() {
     setUnreadMessages(count ?? 0)
   }
 
+  // ── Carga inicial ───────────────────────────────────────────────────────────
   useEffect(() => {
     const getProfile = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      setUserName(user.user_metadata?.full_name?.split(' ')[0] || 'Paciente')
+      // Consulta el nombre desde la tabla perfil
+      const { data: perfil } = await supabase
+        .from('perfil')
+        .select('nombre')
+        .eq('id_perfil', user.id)
+        .single()
+
+      if (perfil?.nombre) {
+        setUserName(perfil.nombre)
+      } else {
+        // Fallback al metadata de auth si no hay perfil aún
+        setUserName(user.user_metadata?.full_name?.split(' ')[0] || 'Paciente')
+      }
 
       // Notificaciones no leídas
       const { data: notifs } = await supabase
@@ -65,7 +89,6 @@ export default function PacientePage() {
 
       setNotifCount(notifs?.length ?? 0)
 
-      // Mensajes no leídos (real, desde Supabase)
       await refreshUnreadMessages(user.id)
     }
 
@@ -74,7 +97,6 @@ export default function PacientePage() {
 
   const handleSectionChange = (section: Section) => {
     setActiveSection(section)
-    // Al abrir la bandeja se limpia el badge; se recalculará al salir
     if (section === 'bandeja') setUnreadMessages(0)
   }
 
@@ -95,12 +117,12 @@ export default function PacientePage() {
   })
 
   const navItems: { key: Section; icon: string; label: string }[] = [
-    { key: 'home',            icon: '🏠', label: 'Principal'       },
-    { key: 'rutina',          icon: '🏋️', label: 'Mi Rutina'       },
-    { key: 'citas',           icon: '📅', label: 'Mis Citas'       },
-    { key: 'progreso',        icon: '📊', label: 'Progreso'        },
-    { key: 'notificaciones',  icon: '🔔', label: 'Notificaciones'  },
-    { key: 'bandeja',         icon: '💬', label: 'Mensajes'        },
+    { key: 'home',           icon: '🏠', label: 'Principal'      },
+    { key: 'rutina',         icon: '🏋️', label: 'Mi Rutina'      },
+    { key: 'citas',          icon: '📅', label: 'Mis Citas'      },
+    { key: 'progreso',       icon: '📊', label: 'Progreso'       },
+    { key: 'notificaciones', icon: '🔔', label: 'Notificaciones' },
+    { key: 'bandeja',        icon: '💬', label: 'Mensajes'       },
   ]
 
   return (
@@ -160,7 +182,9 @@ export default function PacientePage() {
         {/* TOPBAR */}
         <header className="dash-topbar">
           <div className="dash-topbar-left">
-            <div className="dash-topbar-title">Buenos días, {userName} ☀️</div>
+            <div className="dash-topbar-title">
+              {getSaludo()}, {userName} {getSaludoEmoji()}
+            </div>
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
 
