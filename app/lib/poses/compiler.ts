@@ -20,14 +20,31 @@ export async function compilarEjercicio(
     repeticiones: number | null
     secuencia_poses: PoseDB[] | null
     secuencia_poses_personalizada: PoseDB[] | null
-    biblioteca_ejercicio: { secuencia_poses: PoseDB[] } | null
+    // ✅ Puede llegar como objeto o como array según Supabase
+    biblioteca_ejercicio: { secuencia_poses: PoseDB[] } | { secuencia_poses: PoseDB[] }[] | null
   }
 ): Promise<EjercicioCompilado | null> {
+    // 1. Determinar qué secuencia de poses usar
+    // Supabase puede devolver biblioteca_ejercicio como array o como objeto según el join
+    // En compilarEjercicio, justo al inicio de la función:
+    console.log('🔍 biblioteca_ejercicio raw:', JSON.stringify(ejercicio.biblioteca_ejercicio))
+    console.log('🔍 secuencia_poses:', ejercicio.secuencia_poses)
+    console.log('🔍 secuencia_poses_personalizada:', ejercicio.secuencia_poses_personalizada)
 
-  // 1. Determinar qué secuencia de poses usar (prioridad: personalizada > biblioteca > standalone)
-  const poses: PoseDB[] =
+    const bibRaw = ejercicio.biblioteca_ejercicio
+    const bib = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
+
+    console.log('🔍 bib resuelto:', JSON.stringify(bib))
+    console.log('🔍 poses finales:', JSON.stringify(
     ejercicio.secuencia_poses_personalizada ??
-    ejercicio.biblioteca_ejercicio?.secuencia_poses ??
+    bib?.secuencia_poses ??
+    ejercicio.secuencia_poses ??
+    []
+    ))
+
+    const poses: PoseDB[] =
+    ejercicio.secuencia_poses_personalizada ??
+    bib?.secuencia_poses ??
     ejercicio.secuencia_poses ??
     []
 
