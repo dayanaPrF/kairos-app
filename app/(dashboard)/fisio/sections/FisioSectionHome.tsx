@@ -1,5 +1,6 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -42,9 +43,9 @@ export interface FisioSectionHomeProps {
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
-const DIAS_SEMANA  = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
-const DIAS_CORTOS  = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-const MESES        = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
+const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+const DIAS_CORTOS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
 
 const ESTADO_CFG: Record<string, { bg: string; fg: string; dot: string; label: string }> = {
   confirmada: { bg: '#f0fdf4', fg: '#166534', dot: '#22c55e', label: 'Confirmada' },
@@ -95,7 +96,7 @@ function useFisioHomeData(): FisioHomeData & { refresh: () => void } {
           const { data: perfs } = await supabase.from('perfil').select('id_perfil, nombre, primer_apellido').in('id_perfil', pacIds)
           pacientes = (perfs ?? []).map(p => ({
             id_paciente: p.id_perfil,
-            nombre: `${p.nombre} ${p.primer_apellido}`
+            nombre: `${p.nombre} ${p.primer_apellido}`.trim()
           }))
         }
 
@@ -109,9 +110,14 @@ function useFisioHomeData(): FisioHomeData & { refresh: () => void } {
 
         const mapaP = Object.fromEntries(pacientes.map(p => [p.id_paciente, p.nombre]))
         const citasHoy: CitaHoy[] = (citasRaw ?? []).map(c => ({
-          id_cita: c.id_cita, id_paciente: c.id_paciente, hora_inicio: c.hora_inicio?.slice(0, 5) ?? '',
-          hora_fin: c.hora_fin?.slice(0, 5) ?? '', motivo_cita: c.motivo_cita ?? 'Consulta',
-          estado_cita: c.estado_cita, paciente_nombre: mapaP[c.id_paciente] || 'Paciente', notas_cita: c.notas_cita
+          id_cita: c.id_cita,
+          id_paciente: c.id_paciente,
+          hora_inicio: c.hora_inicio?.slice(0, 5) ?? '',
+          hora_fin: c.hora_fin?.slice(0, 5) ?? '',
+          motivo_cita: c.motivo_cita ?? 'Consulta',
+          estado_cita: c.estado_cita,
+          paciente_nombre: mapaP[c.id_paciente] || 'Paciente',
+          notas_cita: c.notas_cita
         }))
 
         const semana = Array.from({ length: 7 }, (_, i) => {
@@ -120,7 +126,7 @@ function useFisioHomeData(): FisioHomeData & { refresh: () => void } {
         })
 
         const horaActual = getHoraActual()
-        const proxima = citasHoy.find(c => c.estado_cita !== 'completada' && c.hora_inicio >= horaActual) || citasHoy.find(c => c.estado_cita !== 'completada') || null
+        const proxima = citasHoy.find(c => c.estado_cita === 'en_curso') || citasHoy.find(c => c.estado_cita !== 'completada' && c.hora_inicio >= horaActual) || citasHoy.find(c => c.estado_cita !== 'completada') || null
 
         if (!cancelled) {
           setData({ fisioId, nombreFisio, totalPacientes: pacIds.length, citasHoy, pacientes, proximaCita: proxima, semana, loading: false, error: null })
@@ -139,33 +145,104 @@ function useFisioHomeData(): FisioHomeData & { refresh: () => void } {
 export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
   const { nombreFisio, totalPacientes, citasHoy, pacientes, proximaCita, semana, loading, error, refresh } = useFisioHomeData()
   const [iniciando, setIniciando] = useState<string | null>(null)
+  const [finalizando, setFinalizando] = useState(false)
   const [citaDetalle, setCitaDetalle] = useState<CitaHoy | null>(null)
+  const [consultaActiva, setConsultaActiva] = useState<CitaHoy | null>(null)
+  const [notasConsulta, setNotasConsulta] = useState('')
+  const [accionError, setAccionError] = useState<string | null>(null)
 
   const navigate = useCallback((section: string, params?: Record<string, string>) => onNavigate?.(section, params), [onNavigate])
 
-  const handleIniciarConsulta = useCallback(async (cita: CitaHoy) => {
-    setIniciando(cita.id_cita)
-    await supabase.from('cita').update({ estado_cita: 'en_curso' }).eq('id_cita', cita.id_cita)
-    navigate('consulta', { id_cita: cita.id_cita, id_paciente: cita.id_paciente })
-  }, [navigate])
+  useEffect(() => {
+    const citaEnCurso = citasHoy.find(c => c.estado_cita === 'en_curso')
+    if (citaEnCurso && !consultaActiva) {
+      setConsultaActiva(citaEnCurso)
+      setNotasConsulta(citaEnCurso.notas_cita ?? '')
+    }
+    if (!citaEnCurso && consultaActiva && consultaActiva.estado_cita === 'completada') {
+      setConsultaActiva(null)
+      setNotasConsulta('')
+    }
+  }, [citasHoy, consultaActiva])
 
-  // Modificado para aceptar notas del modal
-  const handleFinalizarCita = useCallback(async (citaId: string, notas: string) => {
-    const { error } = await supabase
-      .from('cita')
-      .update({ 
-        estado_cita: 'completada',
-        notas_cita: notas 
-      })
-      .eq('id_cita', citaId)
-    
-    if (!error) {
+  const handleIniciarConsulta = useCallback(async (cita: CitaHoy) => {
+    setAccionError(null)
+    setIniciando(cita.id_cita)
+
+    try {
+      if (cita.estado_cita !== 'en_curso') {
+        const { error } = await supabase
+          .from('cita')
+          .update({ estado_cita: 'en_curso', updated_at: new Date().toISOString() })
+          .eq('id_cita', cita.id_cita)
+
+        if (error) throw error
+      }
+
+      const citaEnCurso = { ...cita, estado_cita: 'en_curso' }
+      setConsultaActiva(citaEnCurso)
+      setNotasConsulta(cita.notas_cita ?? '')
       setCitaDetalle(null)
       refresh()
-    } else {
-      console.error("Error al finalizar cita:", error)
+    } catch (err: any) {
+      setAccionError(err?.message ?? 'No se pudo iniciar la consulta.')
+    } finally {
+      setIniciando(null)
     }
   }, [refresh])
+
+  const handleFinalizarConsulta = useCallback(async () => {
+    if (!consultaActiva) return
+    setAccionError(null)
+    setFinalizando(true)
+
+    try {
+      const { error } = await supabase
+        .from('cita')
+        .update({
+          estado_cita: 'completada',
+          notas_cita: notasConsulta,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id_cita', consultaActiva.id_cita)
+
+      if (error) throw error
+
+      setConsultaActiva(null)
+      setNotasConsulta('')
+      setCitaDetalle(null)
+      refresh()
+    } catch (err: any) {
+      setAccionError(err?.message ?? 'No se pudo finalizar la cita.')
+    } finally {
+      setFinalizando(false)
+    }
+  }, [consultaActiva, notasConsulta, refresh])
+
+  const handleFinalizarDesdeModal = useCallback(async (notas: string) => {
+    if (!citaDetalle) return
+    setConsultaActiva(citaDetalle)
+    setNotasConsulta(notas)
+
+    setAccionError(null)
+    setFinalizando(true)
+    try {
+      const { error } = await supabase
+        .from('cita')
+        .update({ estado_cita: 'completada', notas_cita: notas, updated_at: new Date().toISOString() })
+        .eq('id_cita', citaDetalle.id_cita)
+
+      if (error) throw error
+      setCitaDetalle(null)
+      setConsultaActiva(null)
+      setNotasConsulta('')
+      refresh()
+    } catch (err: any) {
+      setAccionError(err?.message ?? 'No se pudo finalizar la cita.')
+    } finally {
+      setFinalizando(false)
+    }
+  }, [citaDetalle, refresh])
 
   if (loading) return <HomeSkeletonLoader />
 
@@ -175,11 +252,12 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
     <>
       {citaDetalle && (
         <CitaDetalleModal
-          cita={citaDetalle} 
+          cita={citaDetalle}
           iniciando={iniciando === citaDetalle.id_cita}
+          finalizando={finalizando}
           onIniciar={() => handleIniciarConsulta(citaDetalle)}
-          onFinalizar={(notas: string) => handleFinalizarCita(citaDetalle.id_cita, notas)}
-          onVerPaciente={() => { setCitaDetalle(null); navigate('paciente', { id_paciente: citaDetalle.id_paciente }) }}
+          onFinalizar={(notas: string) => handleFinalizarDesdeModal(notas)}
+          onVerPaciente={() => { setCitaDetalle(null); navigate('pacientes', { id_paciente: citaDetalle.id_paciente }) }}
           onClose={() => setCitaDetalle(null)}
         />
       )}
@@ -201,6 +279,19 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
           </div>
         </div>
 
+        {(error || accionError) && <ErrorNotice texto={accionError || error || ''} />}
+
+        {consultaActiva && (
+          <ConsultaActivaPanel
+            cita={consultaActiva}
+            notas={notasConsulta}
+            onNotasChange={setNotasConsulta}
+            onFinalizar={handleFinalizarConsulta}
+            finalizando={finalizando}
+            onVerPaciente={() => navigate('pacientes', { id_paciente: consultaActiva.id_paciente })}
+          />
+        )}
+
         <div className="fisio-home-grid">
           {/* COLUMNA IZQUIERDA */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -209,7 +300,14 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
               {citasHoy.length === 0 ? <EmptyState icon="📭" texto="Sin citas para hoy" /> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {citasHoy.map(c => (
-                    <CitaRow key={c.id_cita} cita={c} esProxima={proximaCita?.id_cita === c.id_cita} iniciando={iniciando === c.id_cita} onClickDetalle={() => setCitaDetalle(c)} onIniciar={() => handleIniciarConsulta(c)} />
+                    <CitaRow
+                      key={c.id_cita}
+                      cita={c}
+                      esProxima={proximaCita?.id_cita === c.id_cita}
+                      iniciando={iniciando === c.id_cita}
+                      onClickDetalle={() => setCitaDetalle(c)}
+                      onIniciar={() => handleIniciarConsulta(c)}
+                    />
                   ))}
                 </div>
               )}
@@ -219,11 +317,11 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
               <div className="dash-card-title">👥 Mis Pacientes</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {pacientes.map(p => (
-                  <PacienteSimpleRow 
-                    key={p.id_paciente} 
-                    pac={p} 
-                    onContactar={() => navigate('mensajes', { id_paciente: p.id_paciente })} 
-                    onVer={() => navigate('paciente', { id_paciente: p.id_paciente })} 
+                  <PacienteSimpleRow
+                    key={p.id_paciente}
+                    pac={p}
+                    onContactar={() => navigate('mensajes', { id_paciente: p.id_paciente })}
+                    onVer={() => navigate('pacientes', { id_paciente: p.id_paciente })}
                   />
                 ))}
               </div>
@@ -232,14 +330,14 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
 
           {/* COLUMNA DERECHA */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <ProximaCitaCard 
-                cita={proximaCita} 
-                iniciando={iniciando === proximaCita?.id_cita} 
-                onIniciar={() => proximaCita && handleIniciarConsulta(proximaCita)} 
-                onVerPerfil={() => proximaCita && navigate('paciente', { id_paciente: proximaCita.id_paciente })} 
-                onVerDetalle={() => proximaCita && setCitaDetalle(proximaCita)} 
+            <ProximaCitaCard
+              cita={proximaCita}
+              iniciando={iniciando === proximaCita?.id_cita}
+              onIniciar={() => proximaCita && handleIniciarConsulta(proximaCita)}
+              onVerPerfil={() => proximaCita && navigate('pacientes', { id_paciente: proximaCita.id_paciente })}
+              onVerDetalle={() => proximaCita && setCitaDetalle(proximaCita)}
             />
-            
+
             <div className="dash-card">
               <div className="dash-card-title">📆 Esta semana</div>
               <SemanaSummary semana={semana} />
@@ -259,6 +357,52 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
 }
 
 // ─── Sub-componentes ──────────────────────────────────────────────────────────
+function ConsultaActivaPanel({ cita, notas, onNotasChange, onFinalizar, finalizando, onVerPaciente }: any) {
+  return (
+    <div style={{ marginBottom: '18px', borderRadius: '18px', border: '1.5px solid #0ea5e9', background: 'linear-gradient(135deg, #f0f9ff 0%, #ffffff 100%)', boxShadow: '0 12px 30px rgba(14, 165, 233, 0.12)', overflow: 'hidden' }}>
+      <div style={{ padding: '18px 20px', borderBottom: '1px solid #dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', fontWeight: 900, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Consulta en curso</div>
+          <h3 style={{ margin: '4px 0 0', fontSize: '1.18rem', fontWeight: 900, color: '#0f172a' }}>{cita.paciente_nombre}</h3>
+          <div style={{ marginTop: '4px', fontSize: '0.84rem', color: '#475569' }}>{cita.hora_inicio} - {cita.hora_fin} · {cita.motivo_cita}</div>
+        </div>
+        <EstadoBadge estado="en_curso" />
+      </div>
+
+      <div style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: '1fr 220px', gap: '16px', alignItems: 'stretch' }}>
+        <div>
+          <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.78rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase' }}>Notas de la consulta</label>
+          <textarea
+            value={notas}
+            onChange={(e) => onNotasChange(e.target.value)}
+            placeholder="Escribe aquí la evolución, observaciones, ejercicios indicados o recomendaciones para el paciente."
+            style={{ width: '100%', minHeight: '150px', padding: '14px', borderRadius: '14px', border: '1.5px solid #cbd5e1', resize: 'vertical', fontFamily: 'inherit', fontSize: '0.92rem', lineHeight: 1.5, outline: 'none', background: '#fff' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', justifyContent: 'flex-end' }}>
+          <button onClick={onVerPaciente} style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#fff', color: '#2563eb', border: '1.5px solid #2563eb', fontWeight: 800, cursor: 'pointer' }}>
+            Ver paciente
+          </button>
+          <button onClick={onFinalizar} disabled={finalizando} style={{ width: '100%', padding: '13px', borderRadius: '12px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 900, cursor: finalizando ? 'not-allowed' : 'pointer', opacity: finalizando ? 0.7 : 1 }}>
+            {finalizando ? 'Finalizando...' : 'Finalizar cita'}
+          </button>
+          <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b', lineHeight: 1.4 }}>
+            Al finalizar se guardarán las notas en <strong>notas_cita</strong> y la cita pasará a <strong>completada</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ErrorNotice({ texto }: { texto: string }) {
+  return (
+    <div style={{ marginBottom: '14px', padding: '12px 14px', borderRadius: '12px', background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca', fontWeight: 700, fontSize: '0.85rem' }}>
+      {texto}
+    </div>
+  )
+}
 
 function StatPill({ label, value, icon, accent }: any) {
   return (
@@ -282,9 +426,11 @@ function PacienteSimpleRow({ pac, onContactar, onVer }: any) {
 
 function CitaRow({ cita, esProxima, iniciando, onClickDetalle, onIniciar }: any) {
   const esCompletada = cita.estado_cita === 'completada'
+  const esEnCurso = cita.estado_cita === 'en_curso'
+
   return (
-    <div onClick={onClickDetalle} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 13px', borderRadius: '11px', background: esProxima ? '#eff6ff' : 'var(--bg)', border: `1px solid ${esProxima ? '#3b82f6' : 'var(--border)'}`, cursor: 'pointer', opacity: esCompletada ? 0.6 : 1 }}>
-      <div style={{ minWidth: '50px', textAlign: 'center', background: esCompletada ? '#ccc' : '#3b82f6', borderRadius: '8px', padding: '7px 4px', color: '#fff' }}>
+    <div onClick={onClickDetalle} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 13px', borderRadius: '11px', background: esEnCurso ? '#f0f9ff' : esProxima ? '#eff6ff' : 'var(--bg)', border: `1px solid ${esEnCurso ? '#0ea5e9' : esProxima ? '#3b82f6' : 'var(--border)'}`, cursor: 'pointer', opacity: esCompletada ? 0.6 : 1 }}>
+      <div style={{ minWidth: '50px', textAlign: 'center', background: esCompletada ? '#ccc' : esEnCurso ? '#0ea5e9' : '#3b82f6', borderRadius: '8px', padding: '7px 4px', color: '#fff' }}>
         <div style={{ fontSize: '0.88rem', fontWeight: 900 }}>{cita.hora_inicio}</div>
       </div>
       <Avatar nombre={cita.paciente_nombre} size={32} />
@@ -292,29 +438,35 @@ function CitaRow({ cita, esProxima, iniciando, onClickDetalle, onIniciar }: any)
         <div style={{ fontWeight: 700, fontSize: '0.87rem' }}>{cita.paciente_nombre}</div>
         <div style={{ fontSize: '0.75rem', color: '#666' }}>{cita.motivo_cita}</div>
       </div>
-      <div style={{ display: 'flex', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
         <EstadoBadge estado={cita.estado_cita} />
-        {esProxima && !esCompletada && <button onClick={(e) => { e.stopPropagation(); onIniciar() }} style={{ padding: '5px 11px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.74rem', fontWeight: 700 }}>{iniciando ? '...' : 'Iniciar'}</button>}
+        {(esProxima || esEnCurso) && !esCompletada && (
+          <button onClick={(e) => { e.stopPropagation(); onIniciar() }} style={{ padding: '5px 11px', background: esEnCurso ? '#0ea5e9' : '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer' }}>
+            {iniciando ? '...' : esEnCurso ? 'Continuar' : 'Iniciar'}
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
 function ProximaCitaCard({ cita, iniciando, onIniciar, onVerPerfil, onVerDetalle }: any) {
+  const esEnCurso = cita?.estado_cita === 'en_curso'
+
   return (
     <div className="dash-note-card">
       <div className="dash-card-title" style={{ marginBottom: '14px' }}>🕐 Próxima cita</div>
       {cita ? (
         <>
           <div onClick={onVerDetalle} style={{ display: 'flex', alignItems: 'center', gap: '13px', padding: '13px', borderRadius: '12px', background: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}>
-            <div style={{ width: '50px', height: '50px', borderRadius: '10px', background: '#3b82f6', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900 }}>{cita.hora_inicio}</div>
+            <div style={{ width: '50px', height: '50px', borderRadius: '10px', background: esEnCurso ? '#0ea5e9' : '#3b82f6', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900 }}>{cita.hora_inicio}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>{cita.paciente_nombre}</div>
               <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>{cita.motivo_cita}</div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '11px' }}>
-            <button onClick={onIniciar} disabled={iniciando} style={{ flex: 1, padding: '10px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 700 }}>{iniciando ? 'Iniciando...' : 'Iniciar consulta'}</button>
+            <button onClick={onIniciar} disabled={iniciando} style={{ flex: 1, padding: '10px', background: esEnCurso ? '#0ea5e9' : '#3b82f6', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: iniciando ? 'not-allowed' : 'pointer', opacity: iniciando ? 0.7 : 1 }}>{iniciando ? 'Iniciando...' : esEnCurso ? 'Continuar consulta' : 'Iniciar consulta'}</button>
             <button onClick={onVerPerfil} style={{ padding: '10px', background: 'none', border: '1px solid #3b82f6', color: '#3b82f6', borderRadius: '10px', fontWeight: 700 }}>Perfil</button>
           </div>
         </>
@@ -351,67 +503,73 @@ function Avatar({ nombre, size = 36 }: any) {
   const initials = nombre.split(' ').map((n:any)=>n[0]).join('').toUpperCase().slice(0,2)
   return <div style={{ width: size, height: size, borderRadius: '50%', background: '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 800 }}>{initials}</div>
 }
+
 function EstadoBadge({ estado }: any) {
   const cfg = ESTADO_CFG[estado] || ESTADO_CFG.pendiente
   return <span style={{ background: cfg.bg, color: cfg.fg, padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 700 }}>{cfg.label}</span>
 }
+
 function NavLinkBtn({ label, onClick }: any) {
   return <button onClick={onClick} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>{label} →</button>
 }
+
 function EmptyState({ icon, texto }: any) {
   return <div style={{ padding: '20px', textAlign: 'center', opacity: 0.5 }}><div>{icon}</div>{texto}</div>
 }
+
 function HomeSkeletonLoader() { return <div style={{ padding: '40px', textAlign: 'center' }}>Cargando...</div> }
 
-// ─── Modal Actualizado ────────────────────────────────────────────────────────
-function CitaDetalleModal({ cita, onClose, onIniciar, onFinalizar }: any) {
+// ─── Modal de detalle ─────────────────────────────────────────────────────────
+function CitaDetalleModal({ cita, onClose, onIniciar, onFinalizar, iniciando, finalizando }: any) {
   const [notas, setNotas] = useState(cita.notas_cita || '')
-  const [guardando, setGuardando] = useState(false)
+  const esCompletada = cita.estado_cita === 'completada'
+  const esEnCurso = cita.estado_cita === 'en_curso'
 
   const handleFinalizar = async () => {
-    setGuardando(true)
     await onFinalizar(notas)
-    setGuardando(false)
   }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
-      <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', width: '380px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+      <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', width: '420px', maxWidth: 'calc(100vw - 32px)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>Gestionar Cita</h3>
+          <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>Gestionar cita</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
         </div>
-        
+
         <div style={{ marginBottom: '16px', fontSize: '0.9rem' }}>
           <p style={{ margin: '4px 0' }}><strong>Paciente:</strong> {cita.paciente_nombre}</p>
           <p style={{ margin: '4px 0' }}><strong>Motivo:</strong> {cita.motivo_cita}</p>
+          <p style={{ margin: '4px 0' }}><strong>Horario:</strong> {cita.hora_inicio} - {cita.hora_fin}</p>
+          <EstadoBadge estado={cita.estado_cita} />
         </div>
 
         <div style={{ marginBottom: '20px' }}>
           <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: '#666' }}>NOTAS DE LA CONSULTA</label>
-          <textarea 
+          <textarea
             value={notas}
             onChange={(e) => setNotas(e.target.value)}
             placeholder="Escribe las observaciones aquí..."
-            style={{ width: '100%', height: '100px', padding: '12px', borderRadius: '12px', border: '1.5px solid #eee', resize: 'none', fontFamily: 'inherit', fontSize: '0.9rem' }}
+            style={{ width: '100%', height: '110px', padding: '12px', borderRadius: '12px', border: '1.5px solid #eee', resize: 'none', fontFamily: 'inherit', fontSize: '0.9rem' }}
           />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {cita.estado_cita !== 'completada' && (
+          {!esCompletada && (
             <>
-              <button 
-                onClick={onIniciar} 
-                style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#3b82f6', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer' }}
+              <button
+                onClick={onIniciar}
+                disabled={iniciando}
+                style={{ width: '100%', padding: '12px', borderRadius: '12px', background: esEnCurso ? '#0ea5e9' : '#3b82f6', color: '#fff', border: 'none', fontWeight: 700, cursor: iniciando ? 'not-allowed' : 'pointer', opacity: iniciando ? 0.7 : 1 }}
               >
-                ▶️ Iniciar Consulta
+                {iniciando ? 'Abriendo...' : esEnCurso ? 'Continuar consulta' : 'Iniciar consulta'}
               </button>
-              <button 
+              <button
                 onClick={handleFinalizar}
-                disabled={guardando}
-                style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer', opacity: guardando ? 0.7 : 1 }}
+                disabled={finalizando}
+                style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, cursor: finalizando ? 'not-allowed' : 'pointer', opacity: finalizando ? 0.7 : 1 }}
               >
-                {guardando ? 'Guardando...' : '✅ Finalizar y Guardar'}
+                {finalizando ? 'Guardando...' : 'Finalizar cita'}
               </button>
             </>
           )}
