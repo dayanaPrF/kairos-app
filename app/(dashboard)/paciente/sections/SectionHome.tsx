@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react' // Añadido para el control del modal
+import { useState } from 'react'
 import { useHomeData } from '@/hooks/Usehomedata'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -14,7 +14,7 @@ function formatFecha(iso: string) {
 
 // ── Componente ─────────────────────────────────────────────────────────────────
 export function SectionHome({ onStart }: { onStart: () => void }) {
-  const [isModalOpen, setIsModalOpen] = useState(false) // Estado para el modal
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const {
     rutina, semana, rachaActual, progresoTotal,
     fisio, proximaCita, loading, error
@@ -36,7 +36,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
     <div className="dash-home-grid">
       {/* ── COLUMNA IZQUIERDA ── */}
       <div>
-        {/* HERO — rutina del día */}
         <div className="dash-hero">
           <div>
             <div className="dash-hero-label">Objetivo de hoy</div>
@@ -66,7 +65,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
           <div className="dash-hero-emoji">🧘‍♂️</div>
         </div>
 
-        {/* SEMANA */}
         <div className="dash-card">
           <div className="dash-card-title">Resumen de la semana</div>
           <div className="dash-week-grid">
@@ -91,7 +89,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
           </div>
         </div>
 
-        {/* STATS */}
         <div className="dash-stats-strip">
           <div className="dash-stat-tile">
             <span className="dash-st-label">Racha actual</span>
@@ -115,7 +112,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
 
       {/* ── COLUMNA DERECHA ── */}
       <div>
-        {/* NOTA FISIO */}
         <div className="dash-note-card">
           <div className="dash-nc-header">
             <div className="dash-nc-ava">👨‍⚕️</div>
@@ -145,7 +141,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
                 : 'Las notas aparecerán aquí después de tu primera consulta.'}
             </p>
           )}
-          {/* Botón habilitado con evento onClick */}
           <span 
             className="dash-tag-more" 
             onClick={() => setIsModalOpen(true)}
@@ -155,7 +150,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
           </span>
         </div>
 
-        {/* PRÓXIMA CITA */}
         <div className="dash-appt-card">
           <div className="dash-card-title">Próxima cita</div>
           {proximaCita ? (() => {
@@ -187,82 +181,113 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
         </div>
       </div>
 
-      {/* ── MODAL DE NOTAS ── */}
+      {/* ── MODAL DE NOTAS (NOTAS_CITA) ── */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Historial de Notas</h3>
+              <h3>Historial de Notas de Citas</h3>
               <button className="close-btn" onClick={() => setIsModalOpen(false)}>×</button>
             </div>
             <div className="modal-body">
-              {fisio?.todasLasNotas && fisio.todasLasNotas.length > 0 ? (
-                fisio.todasLasNotas.map((nota: any, idx: number) => (
+              {/* Se accede mediante casting para mapear notas_cita[cite: 1, 3] */}
+              {(fisio as any)?.historialNotas && (fisio as any).historialNotas.length > 0 ? (
+                (fisio as any).historialNotas.map((cita: any, idx: number) => (
                   <div key={idx} className="nota-item">
-                    <span className="nota-fecha">{new Date(nota.fecha).toLocaleDateString()}</span>
-                    <p>{nota.contenido}</p>
+                    <span className="nota-fecha">
+                      {cita.fecha_cita ? new Date(cita.fecha_cita).toLocaleDateString() : 'Fecha no disponible'}
+                    </span>
+                    <p className="nota-texto">{cita.notas_cita}</p>
                   </div>
                 ))
               ) : (
-                <p className="no-notes">No hay notas previas registradas.</p>
+                <div className="no-notes-fallback">
+                  {fisio?.notaReciente ? (
+                    <>
+                      <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '10px' }}>
+                        Nota de la última cita:
+                      </p>
+                      <div className="nota-item">
+                        <span className="nota-fecha">Nota Actual</span>
+                        <p className="nota-texto">{fisio.notaReciente}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="no-notes">No hay historial de notas en tus citas pasadas.</p>
+                  )}
+                </div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Estilos rápidos para el modal */}
       <style jsx>{`
         .modal-overlay {
           position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.5);
+          top: 0; left: 0;
+          width: 100%; height: 100%;
+          background: rgba(0,0,0,0.6);
           display: flex;
           align-items: center;
           justify-content: center;
-          z-index: 1000;
+          z-index: 9999;
+          backdrop-filter: blur(2px);
         }
         .modal-content {
           background: white;
           padding: 24px;
-          border-radius: 12px;
+          border-radius: 16px;
           width: 90%;
-          max-width: 500px;
-          max-height: 80vh;
+          max-width: 450px;
+          max-height: 70vh;
           overflow-y: auto;
-          box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+          box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+          color: #333;
         }
         .modal-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 20px;
+          margin-bottom: 15px;
           border-bottom: 1px solid #eee;
-          padding-bottom: 10px;
+          padding-bottom: 12px;
         }
+        .modal-header h3 { margin: 0; font-size: 1.1rem; color: #111; font-weight: 700; }
         .close-btn {
-          background: none;
+          background: #f0f0f0;
           border: none;
-          font-size: 24px;
+          font-size: 20px;
           cursor: pointer;
           color: #666;
+          width: 32px; height: 32px;
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
         }
         .nota-item {
-          padding: 12px 0;
-          border-bottom: 1px solid #f5f5f5;
+          padding: 15px 0;
+          border-bottom: 1px solid #fafafa;
         }
         .nota-fecha {
-          font-size: 0.75rem;
-          color: #888;
-          font-weight: bold;
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          color: #999;
+          font-weight: 700;
+          display: block;
+          margin-bottom: 4px;
+        }
+        .nota-texto {
+          margin: 0;
+          font-size: 0.95rem;
+          line-height: 1.5;
+          color: #444;
         }
         .no-notes {
           text-align: center;
+          padding: 40px 20px;
           opacity: 0.5;
-          padding: 20px;
+          font-style: italic;
+          font-size: 0.9rem;
         }
       `}</style>
     </div>
