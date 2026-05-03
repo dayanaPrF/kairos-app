@@ -1,4 +1,5 @@
 'use client'
+import { useState } from 'react' // Añadido para el control del modal
 import { useHomeData } from '@/hooks/Usehomedata'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ function formatFecha(iso: string) {
 
 // ── Componente ─────────────────────────────────────────────────────────────────
 export function SectionHome({ onStart }: { onStart: () => void }) {
+  const [isModalOpen, setIsModalOpen] = useState(false) // Estado para el modal
   const {
     rutina, semana, rachaActual, progresoTotal,
     fisio, proximaCita, loading, error
@@ -32,10 +34,8 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
 
   return (
     <div className="dash-home-grid">
-
       {/* ── COLUMNA IZQUIERDA ── */}
       <div>
-
         {/* HERO — rutina del día */}
         <div className="dash-hero">
           <div>
@@ -115,7 +115,6 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
 
       {/* ── COLUMNA DERECHA ── */}
       <div>
-
         {/* NOTA FISIO */}
         <div className="dash-note-card">
           <div className="dash-nc-header">
@@ -146,7 +145,14 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
                 : 'Las notas aparecerán aquí después de tu primera consulta.'}
             </p>
           )}
-          <span className="dash-tag-more">Ver más notas →</span>
+          {/* Botón habilitado con evento onClick */}
+          <span 
+            className="dash-tag-more" 
+            onClick={() => setIsModalOpen(true)}
+            style={{ cursor: fisio ? 'pointer' : 'default', opacity: fisio ? 1 : 0.5 }}
+          >
+            Ver más notas →
+          </span>
         </div>
 
         {/* PRÓXIMA CITA */}
@@ -179,8 +185,86 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
             </div>
           )}
         </div>
-
       </div>
+
+      {/* ── MODAL DE NOTAS ── */}
+      {isModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Historial de Notas</h3>
+              <button className="close-btn" onClick={() => setIsModalOpen(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {fisio?.todasLasNotas && fisio.todasLasNotas.length > 0 ? (
+                fisio.todasLasNotas.map((nota: any, idx: number) => (
+                  <div key={idx} className="nota-item">
+                    <span className="nota-fecha">{new Date(nota.fecha).toLocaleDateString()}</span>
+                    <p>{nota.contenido}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="no-notes">No hay notas previas registradas.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Estilos rápidos para el modal */}
+      <style jsx>{`
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+        }
+        .modal-content {
+          background: white;
+          padding: 24px;
+          border-radius: 12px;
+          width: 90%;
+          max-width: 500px;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+          border-bottom: 1px solid #eee;
+          padding-bottom: 10px;
+        }
+        .close-btn {
+          background: none;
+          border: none;
+          font-size: 24px;
+          cursor: pointer;
+          color: #666;
+        }
+        .nota-item {
+          padding: 12px 0;
+          border-bottom: 1px solid #f5f5f5;
+        }
+        .nota-fecha {
+          font-size: 0.75rem;
+          color: #888;
+          font-weight: bold;
+        }
+        .no-notes {
+          text-align: center;
+          opacity: 0.5;
+          padding: 20px;
+        }
+      `}</style>
     </div>
   )
 }
