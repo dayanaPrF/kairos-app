@@ -27,11 +27,11 @@ interface RutinaActiva {
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 export function SectionRutina() {
-  const [rutina, setRutina]           = useState<RutinaActiva | null>(null)
-  const [ejercicios, setEjercicios]   = useState<EjercicioResumen[]>([])
-  const [loading, setLoading]         = useState(true)
-  const [error, setError]             = useState<string | null>(null)
-  const [selected, setSelected]       = useState<EjercicioResumen | null>(null)
+  const [rutina, setRutina]         = useState<RutinaActiva | null>(null)
+  const [ejercicios, setEjercicios] = useState<EjercicioResumen[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [error, setError]           = useState<string | null>(null)
+  const [selected, setSelected]     = useState<EjercicioResumen | null>(null)
 
   useEffect(() => { cargar() }, [])
 
@@ -41,13 +41,17 @@ export function SectionRutina() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No autenticado')
 
-      // 1. Buscar rutina activa del paciente
+      // 1. Buscar rutina activa del paciente (no vencida, no eliminada)
+      const hoy = new Date().toISOString().split('T')[0]
+
       const { data: rutinaRaw, error: errR } = await supabase
         .from('rutina_paciente')
-        .select('id_rutina_paciente, fecha_inicio, fecha_fin, rutina(id_rutina, nombre_rutina)')
+        .select('id_rutina_paciente, fecha_inicio, fecha_fin, rutina!inner(id_rutina, nombre_rutina, deleted_at)')
         .eq('id_paciente', user.id)
         .eq('activa', true)
         .is('deleted_at', null)
+        .is('rutina.deleted_at', null)
+        .or(`fecha_fin.is.null,fecha_fin.gte.${hoy}`)
         .order('created_at', { ascending: false })
         .limit(1)
         .single()
@@ -76,7 +80,7 @@ export function SectionRutina() {
         setEjercicios([]); setLoading(false); return
       }
 
-      // 3. Traer los ejercicios de todas las fases (con poses para saber si tiene IA)
+      // 3. Traer los ejercicios de todas las fases
       const { data: ejsRaw, error: errE } = await supabase
         .from('ejercicio')
         .select(`
@@ -96,42 +100,31 @@ export function SectionRutina() {
       const faseMap = Object.fromEntries(fases.map(f => [f.id_fase, f]))
 
       const resumen: EjercicioResumen[] = ejsRaw.map(ej => {
-      // ── LOGS TEMPORALES ──
-      console.log('📦 ejercicio raw:', ej.nombre_ejercicio)
-      console.log('📦 biblioteca_ejercicio:', JSON.stringify((ej as any).biblioteca_ejercicio))
-      console.log('📦 secuencia_poses:', ej.secuencia_poses)
-      // ─────────────────────
+        const bibRaw = (ej as any).biblioteca_ejercicio
+        const bib    = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
 
-      const bibRaw = (ej as any).biblioteca_ejercicio
-      const bib = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
+        const poses: any[] =
+          (ej.secuencia_poses_personalizada as any[] | null) ??
+          (bib?.secuencia_poses as any[] | null) ??
+          (ej.secuencia_poses as any[] | null) ??
+          []
 
-      console.log('📦 bib resuelto:', JSON.stringify(bib))
-      console.log('📦 bib?.secuencia_poses:', JSON.stringify(bib?.secuencia_poses))
-
-      const poses: any[] =
-        (ej.secuencia_poses_personalizada as any[] | null) ??
-        (bib?.secuencia_poses as any[] | null) ??
-        (ej.secuencia_poses as any[] | null) ??
-        []
-
-      console.log('📦 poses.length:', poses.length)
-      // ... resto igual
         const totalArts = poses.reduce(
           (acc: number, p: any) => acc + (p.articulaciones?.length ?? 0), 0
         )
 
         const fase = faseMap[ej.id_fase]
         return {
-          id_ejercicio: ej.id_ejercicio,
-          nombre_ejercicio: ej.nombre_ejercicio,
-          descripcion: ej.descripcion,
-          icono: ej.icono,
-          repeticiones: ej.repeticiones,
-          tiene_ia: poses.length > 0,
-          total_poses: poses.length,
+          id_ejercicio:       ej.id_ejercicio,
+          nombre_ejercicio:   ej.nombre_ejercicio,
+          descripcion:        ej.descripcion,
+          icono:              ej.icono,
+          repeticiones:       ej.repeticiones,
+          tiene_ia:           poses.length > 0,
+          total_poses:        poses.length,
           total_articulaciones: totalArts,
-          fase_nombre: fase?.nombre_fase ?? '',
-          fase_numero: fase?.numero_fase ?? 0,
+          fase_nombre:        fase?.nombre_fase ?? '',
+          fase_numero:        fase?.numero_fase ?? 0,
         }
       })
 
@@ -143,14 +136,14 @@ export function SectionRutina() {
     }
   }
 
-  // ── Agrupar por fase ─────────────────────────────────────────────────────────
+  // ── Agrupar por fase ──────────────────────────────────────────────────────────
   const porFase = ejercicios.reduce<Record<number, EjercicioResumen[]>>((acc, ej) => {
     if (!acc[ej.fase_numero]) acc[ej.fase_numero] = []
     acc[ej.fase_numero].push(ej)
     return acc
   }, {})
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <>
       <div className="dash-page-header">
@@ -160,7 +153,7 @@ export function SectionRutina() {
         </div>
       </div>
 
-      {/* ── Estados ── */}
+      {/* Estados de carga / error / vacío */}
       {loading && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', opacity: 0.4 }}>
           Cargando tu rutina...
@@ -190,7 +183,7 @@ export function SectionRutina() {
         </div>
       )}
 
-      {/* ── Info de rutina ── */}
+      {/* Info de rutina */}
       {rutina && (
         <div className='dash-sec-label-rutine'>
           {ejercicios.length} ejercicio{ejercicios.length !== 1 ? 's' : ''} en tu rutina
@@ -203,7 +196,7 @@ export function SectionRutina() {
         </div>
       )}
 
-      {/* ── Lista agrupada por fase ── */}
+      {/* Lista agrupada por fase */}
       {Object.entries(porFase)
         .sort(([a], [b]) => Number(a) - Number(b))
         .map(([numFase, ejes]) => (
@@ -243,8 +236,10 @@ export function SectionRutina() {
                     </div>
                   </div>
 
-                  <span className={`dash-ri-badge ${ej.tiene_ia ? 'pending' : ''}`}
-                    style={!ej.tiene_ia ? { background: '#f0f0f0', color: '#999' } : {}}>
+                  <span
+                    className={`dash-ri-badge ${ej.tiene_ia ? 'pending' : ''}`}
+                    style={!ej.tiene_ia ? { background: '#f0f0f0', color: '#999' } : {}}
+                  >
                     {ej.tiene_ia ? 'Con IA' : 'Manual'}
                   </span>
                 </div>
@@ -254,7 +249,7 @@ export function SectionRutina() {
         ))
       }
 
-      {/* ── Modal de lanzamiento ── */}
+      {/* Modal de lanzamiento */}
       {selected && (
         <div className="modal-overlay">
           <div className="modal-content">
