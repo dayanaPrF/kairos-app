@@ -149,10 +149,22 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
     navigate('consulta', { id_cita: cita.id_cita, id_paciente: cita.id_paciente })
   }, [navigate])
 
-  const handleCompletarCita = useCallback(async (cita: CitaHoy) => {
-    await supabase.from('cita').update({ estado_cita: 'completada' }).eq('id_cita', cita.id_cita)
-    setCitaDetalle(null)
-    refresh()
+  // Modificado para aceptar notas del modal
+  const handleFinalizarCita = useCallback(async (citaId: string, notas: string) => {
+    const { error } = await supabase
+      .from('cita')
+      .update({ 
+        estado_cita: 'completada',
+        notas_cita: notas 
+      })
+      .eq('id_cita', citaId)
+    
+    if (!error) {
+      setCitaDetalle(null)
+      refresh()
+    } else {
+      console.error("Error al finalizar cita:", error)
+    }
   }, [refresh])
 
   if (loading) return <HomeSkeletonLoader />
@@ -163,9 +175,10 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
     <>
       {citaDetalle && (
         <CitaDetalleModal
-          cita={citaDetalle} iniciando={iniciando === citaDetalle.id_cita}
+          cita={citaDetalle} 
+          iniciando={iniciando === citaDetalle.id_cita}
           onIniciar={() => handleIniciarConsulta(citaDetalle)}
-          onCompletar={() => handleCompletarCita(citaDetalle)}
+          onFinalizar={(notas: string) => handleFinalizarCita(citaDetalle.id_cita, notas)}
           onVerPaciente={() => { setCitaDetalle(null); navigate('paciente', { id_paciente: citaDetalle.id_paciente }) }}
           onClose={() => setCitaDetalle(null)}
         />
@@ -209,7 +222,6 @@ export function FisioSectionHome({ onNavigate }: FisioSectionHomeProps) {
                   <PacienteSimpleRow 
                     key={p.id_paciente} 
                     pac={p} 
-                    // Acción corregida para ir al chat específico
                     onContactar={() => navigate('mensajes', { id_paciente: p.id_paciente })} 
                     onVer={() => navigate('paciente', { id_paciente: p.id_paciente })} 
                   />
@@ -351,16 +363,59 @@ function EmptyState({ icon, texto }: any) {
 }
 function HomeSkeletonLoader() { return <div style={{ padding: '40px', textAlign: 'center' }}>Cargando...</div> }
 
-function CitaDetalleModal({ cita, onClose, onIniciar }: any) {
+// ─── Modal Actualizado ────────────────────────────────────────────────────────
+function CitaDetalleModal({ cita, onClose, onIniciar, onFinalizar }: any) {
+  const [notas, setNotas] = useState(cita.notas_cita || '')
+  const [guardando, setGuardando] = useState(false)
+
+  const handleFinalizar = async () => {
+    setGuardando(true)
+    await onFinalizar(notas)
+    setGuardando(false)
+  }
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: '#fff', padding: '24px', borderRadius: '16px', width: '320px' }}>
-        <h3 style={{ margin: '0 0 16px' }}>Detalle de Cita</h3>
-        <p><strong>Paciente:</strong> {cita.paciente_nombre}</p>
-        <p><strong>Motivo:</strong> {cita.motivo_cita}</p>
-        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #ddd' }}>Cerrar</button>
-          <button onClick={onIniciar} style={{ flex: 1, padding: '10px', borderRadius: '8px', background: '#3b82f6', color: '#fff', border: 'none' }}>Iniciar</button>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+      <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', width: '380px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>Gestionar Cita</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+        </div>
+        
+        <div style={{ marginBottom: '16px', fontSize: '0.9rem' }}>
+          <p style={{ margin: '4px 0' }}><strong>Paciente:</strong> {cita.paciente_nombre}</p>
+          <p style={{ margin: '4px 0' }}><strong>Motivo:</strong> {cita.motivo_cita}</p>
+        </div>
+
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: '#666' }}>NOTAS DE LA CONSULTA</label>
+          <textarea 
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            placeholder="Escribe las observaciones aquí..."
+            style={{ width: '100%', height: '100px', padding: '12px', borderRadius: '12px', border: '1.5px solid #eee', resize: 'none', fontFamily: 'inherit', fontSize: '0.9rem' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {cita.estado_cita !== 'completada' && (
+            <>
+              <button 
+                onClick={onIniciar} 
+                style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#3b82f6', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer' }}
+              >
+                ▶️ Iniciar Consulta
+              </button>
+              <button 
+                onClick={handleFinalizar}
+                disabled={guardando}
+                style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer', opacity: guardando ? 0.7 : 1 }}
+              >
+                {guardando ? 'Guardando...' : '✅ Finalizar y Guardar'}
+              </button>
+            </>
+          )}
+          <button onClick={onClose} style={{ width: '100%', padding: '10px', borderRadius: '12px', border: '1px solid #eee', color: '#666', fontWeight: 600, cursor: 'pointer' }}>Cerrar</button>
         </div>
       </div>
     </div>

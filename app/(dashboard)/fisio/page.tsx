@@ -24,10 +24,7 @@ export default function FisioDashPage() {
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [userId, setUserId] = useState<string | null>(null)
 
-  // 1. Refrescar Mensajes No Leídos (Directo a la tabla mensaje)
   const refreshUnreadMessages = useCallback(async (uid: string) => {
-    // Buscamos mensajes no leídos donde el emisor NO sea el usuario actual
-    // y que pertenezcan a un chat donde el usuario es el fisioterapeuta
     const { count, error } = await supabase
       .from('mensaje')
       .select(`
@@ -44,7 +41,6 @@ export default function FisioDashPage() {
     }
   }, [])
 
-  // 2. Refrescar Notificaciones
   const refreshNotifCount = useCallback(async (uid: string) => {
     const { count } = await supabase
       .from('notificacion')
@@ -56,10 +52,7 @@ export default function FisioDashPage() {
     setNotifCount(count ?? 0)
   }, [])
 
-  // 3. Inicialización y Tiempo Rea
   useEffect(() => {
-    // 1. Creamos una referencia al canal fuera de la función async
-    // Usamos un nombre genérico o basado en el tiempo para evitar colisiones
     const channelName = `db-changes-${Math.random().toString(36).substring(7)}`;
     const channel = supabase.channel(channelName);
 
@@ -68,7 +61,6 @@ export default function FisioDashPage() {
       if (!user) return;
       setUserId(user.id);
 
-      // Carga inicial
       const { data: perfil } = await supabase
         .from('perfil')
         .select('nombre')
@@ -79,7 +71,6 @@ export default function FisioDashPage() {
       refreshNotifCount(user.id);
       refreshUnreadMessages(user.id);
 
-      // 2. Configuramos el canal que ya creamos arriba
       channel
         .on(
           'postgres_changes', 
@@ -96,7 +87,6 @@ export default function FisioDashPage() {
 
     init();
 
-    // 3. Limpieza: Removemos el canal específico que creamos en este renderizado
     return () => {
       supabase.removeChannel(channel);
     };
@@ -155,12 +145,10 @@ export default function FisioDashPage() {
             <div className="dash-topbar-sub">{todayStr}</div>
           </div>
           <div className="dash-topbar-actions">
-            {/* Notificaciones Header */}
             <button className="dash-t-btn" onClick={() => setActiveSection('notificaciones')}>
               🔔 {notifCount > 0 && <span className="topbar-badge">{notifCount}</span>}
             </button>
 
-            {/* Mensajes Header */}
             <button className="dash-t-btn primary" onClick={() => setActiveSection('mensajes')}>
               💬 Mensajes
               {unreadMessages > 0 && (
