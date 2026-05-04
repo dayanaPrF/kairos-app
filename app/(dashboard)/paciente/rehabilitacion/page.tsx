@@ -1,7 +1,7 @@
 'use client'
 
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { compilarEjercicio } from '@/app/lib/poses/compiler'
 import PoseDetector from '../../../components/PoseDetector'
@@ -29,7 +29,6 @@ export default function RehabilitacionPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No autenticado')
 
-      // 1. Encontrar la fase del ejercicio inicial
       const { data: ejInicial } = await supabase
         .from('ejercicio')
         .select('id_fase')
@@ -38,7 +37,6 @@ export default function RehabilitacionPage() {
 
       if (!ejInicial) throw new Error('Ejercicio no encontrado')
 
-      // 2. Traer todos los ejercicios de esa misma fase, en orden
       const { data: ejsRaw } = await supabase
         .from('ejercicio')
         .select(`
@@ -52,9 +50,8 @@ export default function RehabilitacionPage() {
 
       if (!ejsRaw?.length) throw new Error('No hay ejercicios en esta fase')
 
-      // 3. Compilar solo los que tienen IA, empezando desde el ejercicio clickeado
       const idxInicial = ejsRaw.findIndex(e => e.id_ejercicio === idEjercicioInicial)
-      const ordenados = [
+      const ordenados  = [
         ...ejsRaw.slice(idxInicial),
         ...ejsRaw.slice(0, idxInicial),
       ]
@@ -84,14 +81,18 @@ export default function RehabilitacionPage() {
     }
   }
 
-  // ── Loading ───────────────────────────────────────────────────────────────────
+  // ── Memoizar ejercicioActual para evitar que PoseDetector se remonte por referencia nueva ──
+  const ejercicioActual = useMemo(
+    () => ejercicios[indiceActual],
+    [ejercicios, indiceActual]
+  )
+
   if (loading) return (
     <div style={{ background: '#080808', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#00d26e', fontFamily: 'sans-serif', letterSpacing: '2px' }}>
       PREPARANDO IA...
     </div>
   )
 
-  // ── Error ─────────────────────────────────────────────────────────────────────
   if (error) return (
     <div style={{ background: '#080808', height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '20px', color: '#fff' }}>
       <span style={{ fontSize: '3rem' }}>⚠️</span>
@@ -102,7 +103,6 @@ export default function RehabilitacionPage() {
     </div>
   )
 
-  // ── Sesión completa ───────────────────────────────────────────────────────────
   if (todosCompletos) return (
     <div style={{ background: '#080808', height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '24px', color: '#fff', fontFamily: "'Nunito', sans-serif" }}>
       <h1 style={{ fontSize: 64, margin: 0, color: '#00d26e', textShadow: '0 0 20px #00d26e' }}>🏆 ¡SESIÓN COMPLETA!</h1>
@@ -126,12 +126,10 @@ export default function RehabilitacionPage() {
     </div>
   )
 
-  // ── Detector ──────────────────────────────────────────────────────────────────
-  const ejercicioActual = ejercicios[indiceActual]
+  if (!ejercicioActual) return null
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* Indicador de progreso entre ejercicios */}
       {ejercicios.length > 1 && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, display: 'flex', justifyContent: 'center', gap: '8px', padding: '8px', background: 'rgba(0,0,0,0.6)' }}>
           {ejercicios.map((ej, i) => (
