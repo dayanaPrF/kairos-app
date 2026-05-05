@@ -5,6 +5,7 @@ import type {
   PoseCompiledStep,
   EjercicioCompilado,
 } from './types'
+import { convertirAnguloMunequitoAMediaPipe } from '@/app/lib/poses/angleConverter'
 
 /**
  * Tolerancia mínima en grados que se aplica en CADA dirección.
@@ -89,25 +90,40 @@ export async function compilarEjercicio(
 
         const [idxA, idxB, idxC] = cfg.puntos_mediapipe.map(Number)
 
-        // ── Tolerancia efectiva: la mayor entre la definida en BD y MIN_TOLERANCE
-        // Esto garantiza que el rango nunca sea tan estrecho que sea imposible de cumplir.
-        // La tolerancia de BD es el OBJETIVO del fisio; MIN_TOLERANCE es el PISO del sistema.
+        // ── Convertir ángulo del muñequito al sistema de MediaPipe ────────────
+        const anguloConvertido   = convertirAnguloMunequitoAMediaPipe(art.angulo, art.nombre_articulacion)
         const toleranciaEfectiva = Math.max(art.tolerancia, MIN_TOLERANCE_DEG)
+        const minAngle           = Math.max(0,   anguloConvertido - toleranciaEfectiva)
+        const maxAngle           = Math.min(180, anguloConvertido + toleranciaEfectiva)
 
-        const minAngle = art.angulo - toleranciaEfectiva
-        const maxAngle = art.angulo + toleranciaEfectiva
+        // ── ORDEN DE puntos_mediapipe EN BD ───────────────────────────────────
+        // La convención que usa este compiler es:
+        //   [0] = idxA  → punto extremo A  (ej: muñeca)
+        //   [1] = idxB  → VÉRTICE           (ej: hombro)  ← donde se mide el ángulo
+        //   [2] = idxC  → punto extremo C  (ej: cadera)
+        //
+        // Si ves ángulos incorrectos (~30° cuando debería ser ~150°), el orden
+        // en BD probablemente está como [vértice, A, C] en lugar de [A, vértice, C].
+        //
+        // Índices MediaPipe:
+        //   11=hombro izq  12=hombro der  13=codo izq  14=codo der
+        //   15=muñeca izq  16=muñeca der  23=cadera izq 24=cadera der
+        //   25=rodilla izq 26=rodilla der 27=tobillo izq 28=tobillo der
+        //
+        // HOMBRO DERECHO correcto: ["16", "12", "24"]  (muñeca → hombro ← cadera)
+        // CODO DERECHO correcto:   ["12", "14", "16"]  (hombro → codo ← muñeca)
 
         if (process.env.NODE_ENV === 'development') {
-          if (art.tolerancia < MIN_TOLERANCE_DEG) {
-            console.info(
-              `[compiler] ${art.nombre_articulacion}: tolerancia BD=${art.tolerancia}° `  +
-              `→ expandida a ${toleranciaEfectiva}° (rango [${minAngle}°, ${maxAngle}°])`
-            )
-          }
+          console.info(
+            `[compiler] ${art.nombre_articulacion}: ` +
+            `puntos=[${idxA}, ${idxB}(vértice), ${idxC}] ` +
+            `BD=${art.angulo}° → convertido=${anguloConvertido}° ` +
+            `±${toleranciaEfectiva}° → rango [${minAngle}°, ${maxAngle}°]`
+          )
         }
 
         return [{
-          landmark:           idxB,   // vértice
+          landmark:           idxB,
           relativeTo:         idxA,
           anchor:             idxC,
           minAngle,

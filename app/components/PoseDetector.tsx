@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision"
 import { validatePose } from "../lib/poseUtils"
-import { getHintVoz, getHintHUD, getScoreLabel } from "@/app/lib/HintUtils"
+import { getHintVoz, getScoreLabel } from "@/app/lib/HintUtils"
 import { MunequitoReferencia } from "./MunequitoReferencia"
 import type { EjercicioCompilado, PoseCompiledStep, ValidationResult } from "../lib/poses/types"
 
@@ -49,10 +49,11 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
   const timerRef       = useRef<NodeJS.Timeout | null>(null)
   const lastFrameTime  = useRef(performance.now())
   const frameCount     = useRef(0)
-  // ── Debounce de hints — evita bombardear con mensajes cada frame ─────────────
-  const lastHintTime   = useRef(0)
-  const HINT_COOLDOWN  = 4000   // ms mínimo entre hints de corrección
-  const pendingHintRef = useRef<NodeJS.Timeout | null>(null)
+  // ── Hint de voz manejado 100% por refs — nunca desde useEffect ───────────────
+  const lastHintTime      = useRef(0)
+  const HINT_COOLDOWN_MS  = 5000   // 5s entre correcciones de postura
+  const isVoiceEnabledRef = useRef(isVoiceEnabled)
+  useEffect(() => { isVoiceEnabledRef.current = isVoiceEnabled }, [isVoiceEnabled])
 
   // ── Sincronizar pasoRef cuando cambia el índice ───────────────────────────────
   useEffect(() => {
@@ -79,7 +80,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
   }, [])
 
   const speak = useCallback((text: string, force = false) => {
-    if (!isVoiceEnabled || typeof window === 'undefined') return
+    if (!isVoiceEnabledRef.current || typeof window === 'undefined') return
     const now    = Date.now()
     const isDiff = text !== lastSpokenText.current
     if (!force && !isDiff && now - lastSpeakTime.current < REPEAT_MESSAGE_COOLDOWN) return
@@ -93,29 +94,28 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     u.onend   = () => { isSpeaking.current = false }
     u.onerror = () => { isSpeaking.current = false }
     window.speechSynthesis.speak(u)
-  }, [isVoiceEnabled, getLatinaVoice])
+  }, [getLatinaVoice])
 
   /**
-   * speakHint — solo para mensajes de corrección de postura.
-   * Debounce de HINT_COOLDOWN ms: si la pose sigue mal después de ese tiempo,
-   * habla una vez y vuelve a esperar. Nunca interrumpe conteo regresivo.
+   * speakHintFromLoop — llamada directamente desde el loop de RAF.
+   * Usa solo refs, sin pasar por React. Garantiza máximo 1 hint cada HINT_COOLDOWN_MS.
    */
-  const speakHint = useCallback((keypointResults: ValidationResult['keypointResults']) => {
-    if (!isVoiceEnabled || typeof window === 'undefined') return
-    if (pendingHintRef.current) return  // ya hay uno programado, esperar
+  const speakHintFromLoop = useCallback((
+    keypointResults: ValidationResult['keypointResults']
+  ) => {
+    if (!isVoiceEnabledRef.current || typeof window === 'undefined') return
     const now = Date.now()
-    if (now - lastHintTime.current < HINT_COOLDOWN) return  // cooldown activo
-
-    pendingHintRef.current = setTimeout(() => {
-      pendingHintRef.current = null
-      // Re-verificar que la pose sigue siendo inválida antes de hablar
-      const hint = getHintVoz(keypointResults)
-      if (hint) {
-        speak(hint, true)
-        lastHintTime.current = Date.now()
-      }
-    }, 600)  // pequeño delay para no hablar en flashes breves de pose inválida
-  }, [isVoiceEnabled, speak])
+    if (now - lastHintTime.current < HINT_COOLDOWN_MS) return
+    const hint = getHintVoz(keypointResults)
+    if (!hint) return
+    lastHintTime.current = now
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(hint)
+    const v = getLatinaVoice()
+    if (v) u.voice = v
+    u.lang = 'es-MX'; u.rate = 1.05
+    window.speechSynthesis.speak(u)
+  }, [getLatinaVoice])
 
   // ── Avanzar al siguiente paso — con overlay de transición ────────────────────
   const avanzarPaso = useCallback((pasoActualIdx: number, repActualNum: number) => {
@@ -153,10 +153,11 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
       }, 1500)
 
     } else {
-      // → Ejercicio completado
+      // → Ejercicio completado — setTimeout(0) para no llamar setState del padre
+      // durante un render de este componente (error "Cannot update while rendering")
       setEjercicioFinalizado(true)
       speak('¡Ejercicio completado! Excelente trabajo.', true)
-      onComplete?.()
+      setTimeout(() => onComplete?.(), 0)
     }
   }, [totalPasos, totalRepeticiones, ejercicio.pasos, speak, onComplete])
 
@@ -168,11 +169,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
 
     if (hasPerson && isPoseValid) {
       if (timeLeft === (paso.hold_sec || 3)) speak(`${paso.nombre}, mantén`, true)
-      // Limpiar hint pendiente — la pose ya es válida
-      if (pendingHintRef.current) {
-        clearTimeout(pendingHintRef.current)
-        pendingHintRef.current = null
-      }
 
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
@@ -188,10 +184,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
       }, 1000)
     } else {
       if (timerRef.current) clearInterval(timerRef.current)
-      // Solo hablar si hay persona detectada y la pose es incorrecta
-      if (hasPerson && !isPoseValid && status.result) {
-        speakHint(status.result.keypointResults)
-      }
     }
 
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
@@ -210,10 +202,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     if (landmarkerRef.current) {
       try { landmarkerRef.current.close() } catch (_) {}
       landmarkerRef.current = null
-    }
-    if (pendingHintRef.current) {
-      clearTimeout(pendingHintRef.current)
-      pendingHintRef.current = null
     }
     window.speechSynthesis?.cancel()
     setIsCameraReady(false)
@@ -287,6 +275,11 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
           const validation = validatePose(mirrored, pasoRef.current)
           const color      = validation.isValid ? '#00d26e' : '#dc3c3c'
           drawingUtils.drawConnectors(mirrored, PoseLandmarker.POSE_CONNECTIONS, { color, lineWidth: 5 })
+
+          // ── Hint de voz directamente desde RAF — cooldown por ref, sin React ──
+          if (!validation.isValid) {
+            speakHintFromLoop(validation.keypointResults)
+          }
 
           frameCount.current++
           const now = performance.now()
@@ -501,17 +494,54 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
             </div>
           )}
 
-          {/* Badge de estado — solo visible si no estamos en transición */}
+          {/* Badge de estado — minimalista */}
           {result && !ejercicioFinalizado && !transicionando && (
             <div style={{
               position: 'absolute', top: 16, left: 16,
-              padding: '8px 20px', borderRadius: 10,
-              background: result.isValid ? 'rgba(0,210,110,0.9)' : 'rgba(220,60,60,0.9)',
-              color: '#fff', fontWeight: 'bold', fontSize: '0.85rem',
+              display: 'flex', flexDirection: 'column', gap: '6px',
             }}>
-              {result.isValid
-                ? `✓ ${paso.nombre} — MANTÉN`
-                : `✗ ${getHintHUD(result.keypointResults) ?? 'CORRIGE TU POSTURA'}`}
+              {result.isValid ? (
+                /* ── VÁLIDO: badge verde prominente ── */
+                <div style={{
+                  padding: '10px 22px', borderRadius: 12,
+                  background: 'rgba(0,210,110,0.92)',
+                  color: '#fff', fontWeight: 800, fontSize: '0.9rem',
+                  letterSpacing: '0.5px',
+                  boxShadow: '0 0 20px rgba(0,210,110,0.4)',
+                }}>
+                  ✓ {paso.nombre} — MANTÉN
+                </div>
+              ) : (
+                /* ── INVÁLIDO: solo chips por articulación, sin texto largo ── */
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxWidth: '340px' }}>
+                  {result.keypointResults
+                    .filter(r => r.actual !== null)
+                    .map((r, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        padding: '4px 10px', borderRadius: '20px',
+                        background: r.passed
+                          ? 'rgba(0,210,110,0.85)'
+                          : 'rgba(0,0,0,0.65)',
+                        border: `1px solid ${r.passed ? '#00d26e' : 'rgba(255,255,255,0.15)'}`,
+                        fontSize: '0.75rem', fontWeight: 700,
+                        color: r.passed ? '#fff' : 'rgba(255,255,255,0.7)',
+                        backdropFilter: 'blur(4px)',
+                      }}>
+                        <span style={{
+                          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                          background: r.passed ? '#fff' : '#dc3c3c',
+                        }} />
+                        {r.nombreArticulacion}
+                        {r.actual !== null && (
+                          <span style={{ opacity: 0.6, fontWeight: 400 }}>
+                            {Math.round(r.actual)}°
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -572,24 +602,24 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
             : transicionando
               ? <span style={{ color: '#00d26e' }}>SIGUIENTE POSE</span>
               : !result
-                ? 'ESPERANDO USUARIO...'
+                ? <span style={{ color: '#555' }}>ESPERANDO USUARIO...</span>
                 : result.isValid
-                  ? '¡ASÍ ESTÁ BIEN!'
-                  : <span style={{ color: '#ffcc00' }}>
-                      {getHintHUD(result.keypointResults)?.toUpperCase() ?? 'CORRIGE TU POSTURA'}
+                  ? <span style={{ color: '#00d26e' }}>¡ASÍ ESTÁ BIEN!</span>
+                  : <span style={{ color: '#555', fontSize: 14 }}>
+                      {getScoreLabel(result.keypointResults)}
                     </span>
           }
         </div>
         <div style={{ textAlign: 'right' }}>
-          <span style={{ fontSize: 24, color: result?.isValid ? '#00d26e' : result ? '#ffcc00' : '#555', fontWeight: '900' }}>
+          <span style={{
+            fontSize: 24, fontWeight: 900,
+            color: result?.isValid ? '#00d26e' : result ? '#ffcc00' : '#555',
+          }}>
             {result ? Math.round(result.score * 100) : 0}%
           </span>
-          <span style={{ fontSize: 11, color: '#555', marginLeft: '8px' }}>PRECISIÓN | {fps} FPS</span>
-          {result && !result.isValid && (
-            <div style={{ fontSize: 10, color: '#444', marginTop: '2px' }}>
-              {getScoreLabel(result.keypointResults)}
-            </div>
-          )}
+          <span style={{ fontSize: 11, color: '#444', marginLeft: '8px' }}>
+            PRECISIÓN | {fps} FPS
+          </span>
         </div>
       </div>
 
