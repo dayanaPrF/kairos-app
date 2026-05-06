@@ -136,13 +136,18 @@ export function SectionProgreso() {
         const idPaciente = user.id  // id_perfil == id_paciente
 
         // ── 1. Rutina activa ──────────────────────────────────────────────────
+        const hoy = new Date().toISOString().split('T')[0]
+
         const { data: rpRaw } = await supabase
           .from('rutina_paciente')
           .select('id_rutina_paciente, id_rutina, fecha_inicio, fecha_fin, rutina(nombre_rutina, duracion)')
           .eq('id_paciente', idPaciente)
           .eq('activa', true)
           .is('deleted_at', null)
-          .single()
+          .or(`fecha_fin.is.null,fecha_fin.gte.${hoy}`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
 
         if (!rpRaw) { setState({ ...EMPTY, loading: false, error: 'Sin rutina activa' }); return }
 
@@ -181,10 +186,18 @@ export function SectionProgreso() {
         const porcentajeGlobal = Math.min(100, Math.round((totalCompletadas / Math.max(1, diasTransc)) * 100))
 
         // Racha actual
-        const setComp = new Set(sesiones.filter(s => s.estado === 'completada').map(s => s.fecha))
+        const fechasConSesion = new Set(
+          sesiones
+            .filter(s => s.estado === 'completada' || s.estado === 'parcial')
+            .map(s => s.fecha)
+        )
         let racha = 0
-        const cur = new Date(dtHoy)
-        while (setComp.has(toYMD(cur))) { racha++; cur.setDate(cur.getDate() - 1) }
+        const hoyStr = new Date().toISOString().split('T')[0]  // misma lógica que useHomeData
+        const cursorRacha = new Date(hoyStr + 'T12:00:00')     // mediodía evita bug de UTC
+        while (fechasConSesion.has(cursorRacha.toISOString().split('T')[0])) {
+          racha++
+          cursorRacha.setDate(cursorRacha.getDate() - 1)
+        }
 
         // Semana actual
         const dtIniSem   = dtIni + (semanaActual - 1) * 7 * MS

@@ -1,50 +1,41 @@
 // hooks/useHomeData.ts
-// Llama esto desde SectionHome o desde el layout del dashboard
-
 'use client'
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 export interface HomeData {
-  // Rutina activa
   rutina: {
     nombre: string
-    duracion: number        // minutos
+    duracion: number
     totalEjercicios: number
     semanaActual: number
     totalSemanas: number
   } | null
-
-  // Semana (Dom→Sáb de la semana actual)
   semana: {
-    dia: string             // 'Dom', 'Lun', etc.
-    fecha: string           // ISO
+    dia: string
+    fecha: string
     esHoy: boolean
-    porcentaje: number | null  // null = sin sesión registrada
+    esFutura: boolean
+    porcentaje: number | null
+    estado: 'completada' | 'parcial' | 'omitida' | 'futura'
   }[]
-
-  // Estadísticas
-  rachaActual: number       // días consecutivos con sesión
-  progresoTotal: number     // 0–100
-
-  // Fisioterapeuta asignado (principal)
+  rachaActual: number
+  progresoTotal: number
   fisio: {
     nombre: string
     especialidad: string
     universidad: string
     notaReciente: string | null
+    historialNotas?: { fecha_cita: string; notas_cita: string }[]
   } | null
-
-  // Próxima cita
   proximaCita: {
-    fecha: string           // ISO date
-    horaInicio: string      // 'HH:MM'
+    fecha: string
+    horaInicio: string
     horaFin: string
     motivo: string
     clinica: string
     estado: string
   } | null
-
   loading: boolean
   error: string | null
 }
@@ -55,7 +46,7 @@ export function useHomeData(): HomeData {
   const [data, setData] = useState<HomeData>({
     rutina: null, semana: [], rachaActual: 0,
     progresoTotal: 0, fisio: null, proximaCita: null,
-    loading: true, error: null
+    loading: true, error: null,
   })
 
   useEffect(() => {
@@ -64,7 +55,7 @@ export function useHomeData(): HomeData {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
-        const hoy = new Date()
+        const hoy    = new Date()
         const isoHoy = hoy.toISOString().split('T')[0]
 
         // ── 1. Rutina activa ────────────────────────────────────────────────
@@ -73,30 +64,33 @@ export function useHomeData(): HomeData {
           .select('*, rutina(nombre_rutina, duracion, fase(id_fase, ejercicio(id_ejercicio)))')
           .eq('id_paciente', user.id)
           .eq('activa', true)
+          .is('deleted_at', null)                               // ← NUEVO
+          .or(`fecha_fin.is.null,fecha_fin.gte.${isoHoy}`)     // ← NUEVO
+          .order('created_at', { ascending: false })            // ← NUEVO: la más reciente primero
+          .limit(1)                                             // ← NUEVO: evita múltiples filas
           .maybeSingle()
 
         let rutinaInfo = null
         if (rutPac?.rutina) {
-          const fases = rutPac.rutina.fase ?? []
+          const fases = (rutPac.rutina as any).fase ?? []
           const totalEjercicios = fases.reduce(
             (acc: number, f: any) => acc + (f.ejercicio?.length ?? 0), 0
           )
           const inicio = rutPac.fecha_inicio
-            ? new Date(rutPac.fecha_inicio) : hoy
+            ? new Date(rutPac.fecha_inicio + 'T00:00:00') : hoy
           const semanaActual = Math.max(1,
             Math.ceil((hoy.getTime() - inicio.getTime()) / (7 * 86400000))
           )
           rutinaInfo = {
-            nombre:         rutPac.rutina.nombre_rutina ?? 'Rutina activa',
-            duracion:       rutPac.rutina.duracion ?? 0,
+            nombre:          (rutPac.rutina as any).nombre_rutina ?? 'Rutina activa',
+            duracion:        (rutPac.rutina as any).duracion ?? 0,
             totalEjercicios,
             semanaActual,
-            totalSemanas:   Math.ceil((rutPac.rutina.duracion ?? 42) / 7),
+            totalSemanas:    Math.ceil(((rutPac.rutina as any).duracion ?? 42) / 7),
           }
         }
 
         // ── 2. Sesiones de la semana actual ─────────────────────────────────
-        // Lunes a domingo de la semana corriente
         const lunes = new Date(hoy)
         lunes.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7))
         lunes.setHours(0, 0, 0, 0)
@@ -105,24 +99,37 @@ export function useHomeData(): HomeData {
 
         const { data: sesiones } = await supabase
           .from('sesion_entrenamiento')
-          .select('fecha, estado_sesion, observaciones_paciente')
+          .select('fecha, estado_sesion')
           .eq('id_paciente', user.id)
           .gte('fecha', lunes.toISOString().split('T')[0])
           .lte('fecha', domingo.toISOString().split('T')[0])
 
         const semanaData = Array.from({ length: 7 }, (_, i) => {
-          const d = new Date(lunes)
+          const d      = new Date(lunes)
           d.setDate(lunes.getDate() + i)
-          const iso = d.toISOString().split('T')[0]
+          const iso    = d.toISOString().split('T')[0]
+          const esFutura = iso > isoHoy
           const sesion = sesiones?.find(s => s.fecha === iso)
+
+          // Días futuros: siempre vacío (null), sin importar si hay sesión fantasma
+          // Días pasados/hoy: completada=100, parcial=60, sin sesión=0
+          const porcentaje = esFutura
+            ? null
+            : sesion?.estado_sesion === 'completada' ? 100
+            : sesion?.estado_sesion === 'parcial'    ? 60
+            : 0   // pasado sin sesión → muestra vacío/omitido
+
           return {
-            dia:       DIAS[(d.getDay())],
-            fecha:     iso,
-            esHoy:     iso === isoHoy,
-            porcentaje: sesion
-              ? (sesion.estado_sesion === 'completada' ? 100
-                : sesion.estado_sesion === 'parcial'   ? 60 : 30)
-              : null
+            dia:        DIAS[d.getDay()],
+            fecha:      iso,
+            esHoy:      iso === isoHoy,
+            esFutura,
+            porcentaje,
+            estado:     esFutura          ? 'futura'
+                      : !sesion           ? 'omitida'
+                      : sesion.estado_sesion === 'completada' ? 'completada'
+                      : sesion.estado_sesion === 'parcial'    ? 'parcial'
+                      : 'omitida',
           }
         })
 
@@ -136,7 +143,7 @@ export function useHomeData(): HomeData {
         let racha = 0
         if (todasSesiones?.length) {
           const fechasSet = new Set(todasSesiones.map(s => s.fecha))
-          const cursor = new Date(hoy)
+          const cursor    = new Date(hoy)
           while (fechasSet.has(cursor.toISOString().split('T')[0])) {
             racha++
             cursor.setDate(cursor.getDate() - 1)
@@ -146,25 +153,23 @@ export function useHomeData(): HomeData {
         // ── 4. Fisioterapeuta principal ──────────────────────────────────────
         let fisioInfo = null
 
-        // Query 1: obtener el id del fisio principal
         const { data: relFisio } = await supabase
           .from('paciente_fisioterapeuta')
           .select('id_fisioterapeuta')
           .eq('id_paciente', user.id)
           .eq('es_principal', true)
+          .is('deleted_at', null)                               // ← NUEVO: por si acaso
           .maybeSingle()
 
         if (relFisio?.id_fisioterapeuta) {
           const fisioId = relFisio.id_fisioterapeuta
 
-          // Query 2: datos del fisio + perfil por separado
           const [{ data: fisioRow }, { data: perfilRow }] = await Promise.all([
             supabase
               .from('fisioterapeuta')
               .select('especialidad, universidad_egreso')
               .eq('id_fisioterapeuta', fisioId)
               .maybeSingle(),
-
             supabase
               .from('perfil')
               .select('nombre, primer_apellido, segundo_apellido')
@@ -178,22 +183,24 @@ export function useHomeData(): HomeData {
             perfilRow?.segundo_apellido,
           ].filter(Boolean).join(' ')
 
-          const { data: citaConNota } = await supabase
+          // Historial completo de notas para el modal
+          const { data: historial } = await supabase
             .from('cita')
-            .select('notas_cita')
+            .select('fecha_cita, notas_cita')
             .eq('id_paciente', user.id)
             .not('notas_cita', 'is', null)
             .order('fecha_cita', { ascending: false })
-            .limit(1)
-            .maybeSingle()
+            .limit(20)
 
           fisioInfo = {
             nombre,
-            especialidad:  fisioRow?.especialidad       ?? '',
-            universidad:   fisioRow?.universidad_egreso ?? '',
-            notaReciente:  citaConNota?.notas_cita      ?? null,
+            especialidad:   fisioRow?.especialidad       ?? '',
+            universidad:    fisioRow?.universidad_egreso ?? '',
+            notaReciente:   historial?.[0]?.notas_cita   ?? null,
+            historialNotas: historial ?? [],
           }
         }
+
         // ── 5. Próxima cita ──────────────────────────────────────────────────
         let citaInfo = null
         const { data: proxCita } = await supabase
@@ -211,30 +218,29 @@ export function useHomeData(): HomeData {
             fecha:      proxCita.fecha_cita,
             horaInicio: proxCita.hora_inicio?.slice(0, 5) ?? '',
             horaFin:    proxCita.hora_fin?.slice(0, 5)    ?? '',
-            motivo:     proxCita.motivo_cita   ?? 'Sesión',
+            motivo:     proxCita.motivo_cita              ?? 'Sesión',
             clinica:    (proxCita.clinica as any)?.nombre_clinica ?? 'Clínica',
-            estado:     proxCita.estado_cita   ?? '',
+            estado:     proxCita.estado_cita              ?? '',
           }
         }
 
-        // ── Progreso total (basado en semana actual / total semanas) ─────────
+        // ── Progreso total ────────────────────────────────────────────────────
         const progresoTotal = rutinaInfo
           ? Math.min(100, Math.round((rutinaInfo.semanaActual / rutinaInfo.totalSemanas) * 100))
           : 0
 
         setData({
-          rutina:       rutinaInfo,
-          semana:       semanaData,
-          rachaActual:  racha,
+          rutina:      rutinaInfo,
+          semana:      semanaData,
+          rachaActual: racha,
           progresoTotal,
-          fisio:        fisioInfo,
-          proximaCita:  citaInfo,
-          loading:      false,
-          error:        null,
+          fisio:       fisioInfo,
+          proximaCita: citaInfo,
+          loading:     false,
+          error:       null,
         })
-
       } catch (err: any) {
-        console.error(err)
+        console.error('[useHomeData]', err)
         setData(prev => ({ ...prev, loading: false, error: err.message }))
       }
     }

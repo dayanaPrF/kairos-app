@@ -6,8 +6,8 @@ import { useHomeData } from '@/hooks/Usehomedata'
 function formatFecha(iso: string) {
   const d = new Date(iso + 'T00:00:00')
   return {
-    dia:  d.getDate().toString(),
-    mes:  d.toLocaleDateString('es-MX', { month: 'short' }).toUpperCase(),
+    dia:       d.getDate().toString(),
+    mes:       d.toLocaleDateString('es-MX', { month: 'short' }).toUpperCase(),
     diaSemana: d.toLocaleDateString('es-MX', { weekday: 'long' }),
   }
 }
@@ -17,7 +17,7 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const {
     rutina, semana, rachaActual, progresoTotal,
-    fisio, proximaCita, loading, error
+    fisio, proximaCita, loading, error,
   } = useHomeData()
 
   if (loading) return (
@@ -34,6 +34,7 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
 
   return (
     <div className="dash-home-grid">
+
       {/* ── COLUMNA IZQUIERDA ── */}
       <div>
         <div className="dash-hero">
@@ -65,19 +66,24 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
           <div className="dash-hero-emoji">🧘‍♂️</div>
         </div>
 
+        {/* ── RESUMEN DE LA SEMANA ── */}
         <div className="dash-card">
           <div className="dash-card-title">Resumen de la semana</div>
           <div className="dash-week-grid">
             {semana.map((item, i) => {
               const status =
-                item.esHoy                       ? 'today'
-                : item.porcentaje === 100        ? 'done'
-                : item.porcentaje !== null       ? 'partial'
+                item.esHoy                     ? 'today'
+                : item.estado === 'completada' ? 'done'
+                : item.estado === 'parcial'    ? 'partial'
                 : ''
+
               const label =
-                item.esHoy                       ? 'Hoy'
-                : item.porcentaje !== null       ? `${item.porcentaje}%`
+                item.esHoy                     ? 'Hoy'
+                : item.estado === 'completada' ? '✓'
+                : item.estado === 'parcial'    ? '~'
+                : item.esFutura                ? '·'
                 : '—'
+
               return (
                 <div key={i} className={`dash-wc ${status}`}>
                   <span className="dash-wc-day">{item.dia}</span>
@@ -141,9 +147,9 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
                 : 'Las notas aparecerán aquí después de tu primera consulta.'}
             </p>
           )}
-          <span 
-            className="dash-tag-more" 
-            onClick={() => setIsModalOpen(true)}
+          <span
+            className="dash-tag-more"
+            onClick={() => fisio && setIsModalOpen(true)}
             style={{ cursor: fisio ? 'pointer' : 'default', opacity: fisio ? 1 : 0.5 }}
           >
             Ver más notas →
@@ -181,41 +187,30 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
         </div>
       </div>
 
-      {/* ── MODAL DE NOTAS (NOTAS_CITA) ── */}
+      {/* ── MODAL DE NOTAS ── */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Historial de Notas de Citas</h3>
               <button className="close-btn" onClick={() => setIsModalOpen(false)}>×</button>
             </div>
             <div className="modal-body">
-              {/* Se accede mediante casting para mapear notas_cita[cite: 1, 3] */}
-              {(fisio as any)?.historialNotas && (fisio as any).historialNotas.length > 0 ? (
-                (fisio as any).historialNotas.map((cita: any, idx: number) => (
+              {fisio?.historialNotas && fisio.historialNotas.length > 0 ? (
+                fisio.historialNotas.map((cita, idx) => (
                   <div key={idx} className="nota-item">
                     <span className="nota-fecha">
-                      {cita.fecha_cita ? new Date(cita.fecha_cita).toLocaleDateString() : 'Fecha no disponible'}
+                      {cita.fecha_cita
+                        ? new Date(cita.fecha_cita + 'T00:00:00').toLocaleDateString('es-MX', {
+                            day: 'numeric', month: 'long', year: 'numeric',
+                          })
+                        : 'Fecha no disponible'}
                     </span>
                     <p className="nota-texto">{cita.notas_cita}</p>
                   </div>
                 ))
               ) : (
-                <div className="no-notes-fallback">
-                  {fisio?.notaReciente ? (
-                    <>
-                      <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '10px' }}>
-                        Nota de la última cita:
-                      </p>
-                      <div className="nota-item">
-                        <span className="nota-fecha">Nota Actual</span>
-                        <p className="nota-texto">{fisio.notaReciente}</p>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="no-notes">No hay historial de notas en tus citas pasadas.</p>
-                  )}
-                </div>
+                <p className="no-notes">No hay historial de notas en tus citas pasadas.</p>
               )}
             </div>
           </div>
@@ -253,7 +248,12 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
           border-bottom: 1px solid #eee;
           padding-bottom: 12px;
         }
-        .modal-header h3 { margin: 0; font-size: 1.1rem; color: #111; font-weight: 700; }
+        .modal-header h3 {
+          margin: 0;
+          font-size: 1.1rem;
+          color: #111;
+          font-weight: 700;
+        }
         .close-btn {
           background: #f0f0f0;
           border: none;
@@ -266,8 +266,9 @@ export function SectionHome({ onStart }: { onStart: () => void }) {
         }
         .nota-item {
           padding: 15px 0;
-          border-bottom: 1px solid #fafafa;
+          border-bottom: 1px solid #f0f0f0;
         }
+        .nota-item:last-child { border-bottom: none; }
         .nota-fecha {
           font-size: 0.7rem;
           text-transform: uppercase;
