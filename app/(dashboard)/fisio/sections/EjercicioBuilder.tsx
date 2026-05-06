@@ -73,7 +73,23 @@ function convertirAMediaPipe(articulaciones: PoseArticulacion[]): PoseArticulaci
     const esDerecho = n.includes('derecho') || n.includes('der')
 
     if (n.includes('hombro') && esDerecho) {
+      // Hombro derecho: vector muñeca apunta al lado opuesto en MP → espejar
       return { ...art, angulo: 180 - art.angulo }
+    }
+
+    if (n.includes('cadera')) {
+      // Cadera: muñequito 90°=de pie → MP 180°=de pie
+      // Izquierda: +90 offset
+      // Derecha: el hombro de referencia está al lado contrario → 90 - angulo
+      const mp = esDerecho
+        ? Math.max(0, Math.min(180, 90 - art.angulo))
+        : Math.max(0, Math.min(180, art.angulo + 90))
+      return { ...art, angulo: mp }
+    }
+
+    if (n.includes('tobillo')) {
+      // Tobillo: muñequito desde horizontal → MP entre tibia y pie → +90
+      return { ...art, angulo: Math.max(0, Math.min(180, art.angulo + 90)) }
     }
 
     return art

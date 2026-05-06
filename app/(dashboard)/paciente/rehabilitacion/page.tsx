@@ -11,11 +11,12 @@ export default function RehabilitacionPage() {
   const searchParams = useSearchParams()
   const router       = useRouter()
 
-  const [ejercicios, setEjercicios]         = useState<EjercicioCompilado[]>([])
-  const [indiceActual, setIndiceActual]     = useState(0)
-  const [error, setError]                   = useState<string | null>(null)
-  const [loading, setLoading]               = useState(true)
-  const [todosCompletos, setTodosCompletos] = useState(false)
+  const [ejercicios, setEjercicios]               = useState<EjercicioCompilado[]>([])
+  const [idRutinasPaciente, setIdRutinasPaciente] = useState<string | null>(null)  // ← NUEVO
+  const [indiceActual, setIndiceActual]           = useState(0)
+  const [error, setError]                         = useState<string | null>(null)
+  const [loading, setLoading]                     = useState(true)
+  const [todosCompletos, setTodosCompletos]       = useState(false)
 
   useEffect(() => {
     const id = searchParams.get('id')
@@ -36,6 +37,21 @@ export default function RehabilitacionPage() {
         .single()
 
       if (!ejInicial) throw new Error('Ejercicio no encontrado')
+
+      // ← NUEVO: buscar la rutina_paciente activa para pasarla al hook de sesión
+      const hoy = new Date().toISOString().split('T')[0]
+      const { data: rpActiva } = await supabase
+        .from('rutina_paciente')
+        .select('id_rutina_paciente')
+        .eq('id_paciente', user.id)
+        .eq('activa', true)
+        .is('deleted_at', null)
+        .or(`fecha_fin.is.null,fecha_fin.gte.${hoy}`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      setIdRutinasPaciente(rpActiva?.id_rutina_paciente ?? null)
 
       const { data: ejsRaw } = await supabase
         .from('ejercicio')
@@ -81,7 +97,6 @@ export default function RehabilitacionPage() {
     }
   }
 
-  // ── Memoizar ejercicioActual para evitar que PoseDetector se remonte por referencia nueva ──
   const ejercicioActual = useMemo(
     () => ejercicios[indiceActual],
     [ejercicios, indiceActual]
@@ -156,6 +171,7 @@ export default function RehabilitacionPage() {
         ejercicio={ejercicioActual}
         onBack={() => router.push('/paciente')}
         onComplete={avanzarEjercicio}
+        idRutinasPaciente={idRutinasPaciente}                            // ← NUEVO
       />
     </div>
   )

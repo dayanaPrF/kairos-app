@@ -25,12 +25,20 @@ export function MunequitoReferencia({ articulaciones, size = 1, mostrarLeyenda =
   // volverá a quedar en la derecha frente al usuario.
   const articulacionesProcesadas = articulaciones.map(art => {
     const nombre = art.nombre_articulacion.toLowerCase();
-    let nuevoNombre = art.nombre_articulacion;
+    let nuevoNombre = nombre;
 
-    if (nombre.includes('derecho') || nombre.includes('der')) {
-      nuevoNombre = nombre.replace('derecho', 'izquierdo').replace('der', 'izq');
-    } else if (nombre.includes('izquierdo') || nombre.includes('izq')) {
-      nuevoNombre = nombre.replace('izquierdo', 'derecho').replace('izq', 'der');
+    if (nombre.includes('derecha')) {
+      nuevoNombre = nombre.replace('derecha', 'izquierda');
+    } else if (nombre.includes('derecho')) {
+      nuevoNombre = nombre.replace('derecho', 'izquierdo');
+    } else if (nombre.includes(' der ') || nombre.endsWith(' der')) {
+      nuevoNombre = nombre.replace(' der', ' izq');
+    } else if (nombre.includes('izquierda')) {
+      nuevoNombre = nombre.replace('izquierda', 'derecha');
+    } else if (nombre.includes('izquierdo')) {
+      nuevoNombre = nombre.replace('izquierdo', 'derecho');
+    } else if (nombre.includes(' izq ') || nombre.endsWith(' izq')) {
+      nuevoNombre = nombre.replace(' izq', ' der');
     }
 
     return { ...art, nombre_articulacion: nuevoNombre };
@@ -94,7 +102,7 @@ export function MunequitoReferencia({ articulaciones, size = 1, mostrarLeyenda =
   const { knee: kneeIzq, ankle: ankleIzq } = calcRodilla(HIPL, -1, rodillaIzq);
 
   const calcCadera = (hip: typeof HIPR, lado: 1 | -1, cadera?: PoseArticulacionSimple) => {
-    const ang = cadera ? cadera.angulo - 90 : -85;
+    const ang = cadera ? cadera.angulo - 180 : -85;
     const thigh = {
       x: hip.x + 46 * Math.sin(d2r(ang)) * lado * 0.4,
       y: hip.y + 46 * Math.cos(d2r(ang - 10)) * (cadera && cadera.angulo > 90 ? 1 : -0.5),
@@ -125,6 +133,12 @@ export function MunequitoReferencia({ articulaciones, size = 1, mostrarLeyenda =
   const useTobilloIzq = !!tobilloIzq && !caderaIzq && !rodillaIzq;
 
   const w = Math.round(180 * size); const h = Math.round(280 * size);
+
+  console.log('articulacionesProcesadas:', articulacionesProcesadas)
+  console.log('buscando cadera derecha:', articulacionesProcesadas.find(a => a.nombre_articulacion.toLowerCase().includes('cadera derecha')))
+  console.log('buscando cadera izquierda:', articulacionesProcesadas.find(a => a.nombre_articulacion.toLowerCase().includes('cadera izquierda')))
+  console.log('nombre exacto:', articulacionesProcesadas[0]?.nombre_articulacion)
+console.log('chars:', [...(articulacionesProcesadas[0]?.nombre_articulacion ?? '')].map(c => c.charCodeAt(0)))
 
   return (
     <svg width={w} height={h} viewBox="0 0 180 280" style={{ display: 'block' }}>

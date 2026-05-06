@@ -5,22 +5,23 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-
 import { validatePose } from "../lib/poseUtils"
 import { getHintVoz, getScoreLabel } from "@/app/lib/HintUtils"
 import { MunequitoReferencia } from "./MunequitoReferencia"
+import { useSesion } from "@/hooks/useSesion"                       // ← NUEVO
 import type { EjercicioCompilado, PoseCompiledStep, ValidationResult } from "../lib/poses/types"
 
 const REPEAT_MESSAGE_COOLDOWN = 3000
 
 interface Props {
-  ejercicio: EjercicioCompilado
-  onBack: () => void
-  onComplete?: () => void
+  ejercicio:          EjercicioCompilado
+  onBack:             () => void
+  onComplete?:        () => void
+  idRutinasPaciente?: string | null                                      // ← NUEVO (se pasa desde la página)
 }
 
-export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
+export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasPaciente }: Props) {
   const videoRef      = useRef<HTMLVideoElement>(null)
   const canvasRef     = useRef<HTMLCanvasElement>(null)
   const streamRef     = useRef<MediaStream | null>(null)
   const landmarkerRef = useRef<PoseLandmarker | null>(null)
-  // ── pasoRef siempre apunta al paso vigente para el loop de RAF ──────────────
   const pasoRef       = useRef<PoseCompiledStep>(ejercicio.pasos[0])
   const yaInicioRef   = useRef(false)
 
@@ -35,27 +36,26 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
   const [ejercicioFinalizado, setEjercicioFinalizado] = useState(false)
   const [isVoiceEnabled, setIsVoiceEnabled]           = useState(true)
   const [isCameraReady, setIsCameraReady]             = useState(false)
-  // ── Overlay de transición entre poses (en lugar de return temprano) ──────────
   const [transicionando, setTransicionando]           = useState(false)
   const [transicionNombre, setTransicionNombre]       = useState('')
 
-  // ── 'paso' nunca es undefined — si el índice se sale, usamos el último ──────
   const paso: PoseCompiledStep =
     ejercicio.pasos[pasoActual] ?? ejercicio.pasos[ejercicio.pasos.length - 1]
 
-  const lastSpokenText = useRef('')
-  const lastSpeakTime  = useRef(0)
-  const isSpeaking     = useRef(false)
-  const timerRef       = useRef<NodeJS.Timeout | null>(null)
-  const lastFrameTime  = useRef(performance.now())
-  const frameCount     = useRef(0)
-  // ── Hint de voz manejado 100% por refs — nunca desde useEffect ───────────────
+  const lastSpokenText    = useRef('')
+  const lastSpeakTime     = useRef(0)
+  const isSpeaking        = useRef(false)
+  const timerRef          = useRef<NodeJS.Timeout | null>(null)
+  const lastFrameTime     = useRef(performance.now())
+  const frameCount        = useRef(0)
   const lastHintTime      = useRef(0)
-  const HINT_COOLDOWN_MS  = 5000   // 5s entre correcciones de postura
+  const HINT_COOLDOWN_MS  = 5000
   const isVoiceEnabledRef = useRef(isVoiceEnabled)
   useEffect(() => { isVoiceEnabledRef.current = isVoiceEnabled }, [isVoiceEnabled])
 
-  // ── Sincronizar pasoRef cuando cambia el índice ───────────────────────────────
+  // ← NUEVO: hook de sesión
+  const { iniciarSesion, acumularScore, cerrarSesion } = useSesion({ idRutinasPaciente })
+
   useEffect(() => {
     const nuevoPaso = ejercicio.pasos[pasoActual]
     if (!nuevoPaso) return
@@ -63,11 +63,9 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     setTimeLeft(nuevoPaso.hold_sec || 3)
     setPasoCompletado(false)
     setStatus({ result: null, fps: 0 })
-    // Quitar overlay de transición al confirmar que el paso ya está listo
     setTransicionando(false)
   }, [pasoActual, ejercicio.pasos])
 
-  // ── Voz ───────────────────────────────────────────────────────────────────────
   const getLatinaVoice = useCallback(() => {
     if (typeof window === 'undefined') return null
     const voices = window.speechSynthesis.getVoices()
@@ -96,10 +94,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     window.speechSynthesis.speak(u)
   }, [getLatinaVoice])
 
-  /**
-   * speakHintFromLoop — llamada directamente desde el loop de RAF.
-   * Usa solo refs, sin pasar por React. Garantiza máximo 1 hint cada HINT_COOLDOWN_MS.
-   */
   const speakHintFromLoop = useCallback((
     keypointResults: ValidationResult['keypointResults']
   ) => {
@@ -117,51 +111,35 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     window.speechSynthesis.speak(u)
   }, [getLatinaVoice])
 
-  // ── Avanzar al siguiente paso — con overlay de transición ────────────────────
   const avanzarPaso = useCallback((pasoActualIdx: number, repActualNum: number) => {
     const esUltimoPaso = pasoActualIdx + 1 >= totalPasos
     const esUltimaRep  = repActualNum >= totalRepeticiones
 
     if (!esUltimoPaso) {
-      // → Siguiente pose dentro de la misma repetición
       const siguientePaso = ejercicio.pasos[pasoActualIdx + 1]
       speak(`Siguiente pose: ${siguientePaso.nombre}`, true)
-
-      // Mostrar overlay con nombre de la siguiente pose
       setTransicionando(true)
       setTransicionNombre(siguientePaso.nombre)
-
-      setTimeout(() => {
-        setPasoActual(pasoActualIdx + 1)
-        // El overlay se oculta en el useEffect de pasoActual
-      }, 1200)
-
+      setTimeout(() => { setPasoActual(pasoActualIdx + 1) }, 1200)
     } else if (!esUltimaRep) {
-      // → Nueva repetición desde el primer paso
       const sigRep = repActualNum + 1
       speak(`Repetición ${sigRep} de ${totalRepeticiones}`, true)
-
       setTransicionando(true)
       setTransicionNombre(`Repetición ${sigRep} · ${ejercicio.pasos[0].nombre}`)
-
       setTimeout(() => {
         setRepActual(sigRep)
         setPasoActual(0)
         setPasoCompletado(false)
         setTimeLeft(ejercicio.pasos[0].hold_sec || 3)
-        // El overlay se oculta en el useEffect de pasoActual
       }, 1500)
-
     } else {
-      // → Ejercicio completado — setTimeout(0) para no llamar setState del padre
-      // durante un render de este componente (error "Cannot update while rendering")
       setEjercicioFinalizado(true)
       speak('¡Ejercicio completado! Excelente trabajo.', true)
+      cerrarSesion(true)                                                // ← NUEVO
       setTimeout(() => onComplete?.(), 0)
     }
-  }, [totalPasos, totalRepeticiones, ejercicio.pasos, speak, onComplete])
+  }, [totalPasos, totalRepeticiones, ejercicio.pasos, speak, onComplete, cerrarSesion])
 
-  // ── Cronómetro con repeticiones ───────────────────────────────────────────────
   useEffect(() => {
     if (!paso || pasoCompletado || ejercicioFinalizado || transicionando) return
     const isPoseValid = status.result?.isValid
@@ -169,7 +147,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
 
     if (hasPerson && isPoseValid) {
       if (timeLeft === (paso.hold_sec || 3)) speak(`${paso.nombre}, mantén`, true)
-
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 1) {
@@ -185,11 +162,9 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     } else {
       if (timerRef.current) clearInterval(timerRef.current)
     }
-
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [status.result?.isValid, !!status.result, pasoCompletado, ejercicioFinalizado, transicionando])
 
-  // ── Cleanup ───────────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => { t.stop(); t.enabled = false })
@@ -208,7 +183,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     yaInicioRef.current = false
   }, [])
 
-  // ── MediaPipe — solo se monta una vez por ejercicio ───────────────────────────
   useEffect(() => {
     let running = true
     let rafId: number
@@ -240,6 +214,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
             videoRef.current?.play()
             setIsCameraReady(true)
             yaInicioRef.current = true
+            iniciarSesion()                                              // ← NUEVO: arrancar sesión cuando la cámara está lista
             loop()
           }
         }
@@ -271,15 +246,15 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
           const mirrored     = result.landmarks[0].map(lm => ({
             x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
           }))
-          // ── Siempre usa pasoRef.current — nunca el estado de React ──────────
           const validation = validatePose(mirrored, pasoRef.current)
           const color      = validation.isValid ? '#00d26e' : '#dc3c3c'
           drawingUtils.drawConnectors(mirrored, PoseLandmarker.POSE_CONNECTIONS, { color, lineWidth: 5 })
 
-          // ── Hint de voz directamente desde RAF — cooldown por ref, sin React ──
           if (!validation.isValid) {
             speakHintFromLoop(validation.keypointResults)
           }
+
+          acumularScore(validation.score)                                // ← NUEVO: acumular score en cada frame
 
           frameCount.current++
           const now = performance.now()
@@ -299,7 +274,12 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
     }
 
     setup()
-    return () => { running = false; cancelAnimationFrame(rafId); cleanup() }
+    return () => {
+      running = false
+      cancelAnimationFrame(rafId)
+      cerrarSesion(false)                                                // ← NUEVO: sesión parcial si sale sin completar
+      cleanup()
+    }
   }, [ejercicio])
 
   const { result, fps } = status
@@ -318,7 +298,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
         padding: '10px 20px', gap: '12px', flexShrink: 0,
       }}>
         <button
-          onClick={() => { cleanup(); onBack() }}
+          onClick={() => { cerrarSesion(false); cleanup(); onBack() }}   // ← NUEVO: cerrar sesión al volver
           style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 10, padding: '8px 16px', color: '#bbb', cursor: 'pointer' }}
         >
           ← VOLVER
@@ -364,7 +344,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
           background: '#111', border: '1px solid #222', borderRadius: 20,
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
-
           {totalPasos > 1 && (
             <div style={{ display: 'flex', gap: '4px', padding: '10px 10px 0', flexShrink: 0 }}>
               {ejercicio.pasos.map((p, i) => (
@@ -432,15 +411,12 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
           background: '#000', border: '1px solid #222',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-
-          {/* Splash inicial — solo si nunca ha arrancado la cámara */}
           {!isCameraReady && !yaInicioRef.current && (
             <div style={{ color: '#00d26e', fontSize: '1.1rem', letterSpacing: '2px', position: 'absolute', zIndex: 5 }}>
               INICIALIZANDO SISTEMA...
             </div>
           )}
 
-          {/* Canvas — siempre montado, visible en cuanto la cámara arranca */}
           <canvas
             ref={canvasRef}
             style={{
@@ -449,8 +425,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
             }}
           />
 
-          {/* ── OVERLAY DE TRANSICIÓN ENTRE POSES ─────────────────────────
-              Aparece encima del canvas — el canvas sigue corriendo debajo ── */}
           {transicionando && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 20,
@@ -466,42 +440,23 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
                 border: '3px solid #00d26e',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '2rem',
-              }}>
-                ✓
-              </div>
+              }}>✓</div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ color: '#00d26e', fontSize: '0.75rem', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: '8px', fontWeight: 700 }}>
                   ¡Pose completada!
                 </div>
-                <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 800 }}>
-                  {transicionNombre}
-                </div>
-                <div style={{ color: '#555', fontSize: '0.8rem', marginTop: '6px' }}>
-                  Prepárate...
-                </div>
+                <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 800 }}>{transicionNombre}</div>
+                <div style={{ color: '#555', fontSize: '0.8rem', marginTop: '6px' }}>Prepárate...</div>
               </div>
-              {/* Barra de progreso animada */}
-              <div style={{
-                width: '160px', height: '3px',
-                background: '#1a1a1a', borderRadius: '2px', overflow: 'hidden',
-                marginTop: '4px',
-              }}>
-                <div style={{
-                  height: '100%', background: '#00d26e', borderRadius: '2px',
-                  animation: 'transicionBar 1.2s linear forwards',
-                }} />
+              <div style={{ width: '160px', height: '3px', background: '#1a1a1a', borderRadius: '2px', overflow: 'hidden', marginTop: '4px' }}>
+                <div style={{ height: '100%', background: '#00d26e', borderRadius: '2px', animation: 'transicionBar 1.2s linear forwards' }} />
               </div>
             </div>
           )}
 
-          {/* Badge de estado — minimalista */}
           {result && !ejercicioFinalizado && !transicionando && (
-            <div style={{
-              position: 'absolute', top: 16, left: 16,
-              display: 'flex', flexDirection: 'column', gap: '6px',
-            }}>
+            <div style={{ position: 'absolute', top: 16, left: 16, display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {result.isValid ? (
-                /* ── VÁLIDO: badge verde prominente ── */
                 <div style={{
                   padding: '10px 22px', borderRadius: 12,
                   background: 'rgba(0,210,110,0.92)',
@@ -512,7 +467,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
                   ✓ {paso.nombre} — MANTÉN
                 </div>
               ) : (
-                /* ── INVÁLIDO: solo chips por articulación, sin texto largo ── */
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxWidth: '340px' }}>
                   {result.keypointResults
                     .filter(r => r.actual !== null)
@@ -520,24 +474,15 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
                       <div key={i} style={{
                         display: 'flex', alignItems: 'center', gap: '5px',
                         padding: '4px 10px', borderRadius: '20px',
-                        background: r.passed
-                          ? 'rgba(0,210,110,0.85)'
-                          : 'rgba(0,0,0,0.65)',
+                        background: r.passed ? 'rgba(0,210,110,0.85)' : 'rgba(0,0,0,0.65)',
                         border: `1px solid ${r.passed ? '#00d26e' : 'rgba(255,255,255,0.15)'}`,
                         fontSize: '0.75rem', fontWeight: 700,
                         color: r.passed ? '#fff' : 'rgba(255,255,255,0.7)',
                         backdropFilter: 'blur(4px)',
                       }}>
-                        <span style={{
-                          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                          background: r.passed ? '#fff' : '#dc3c3c',
-                        }} />
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: r.passed ? '#fff' : '#dc3c3c' }} />
                         {r.nombreArticulacion}
-                        {r.actual !== null && (
-                          <span style={{ opacity: 0.6, fontWeight: 400 }}>
-                            {Math.round(r.actual)}°
-                          </span>
-                        )}
+                        {r.actual !== null && <span style={{ opacity: 0.6, fontWeight: 400 }}>{Math.round(r.actual)}°</span>}
                       </div>
                     ))}
                 </div>
@@ -545,7 +490,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
             </div>
           )}
 
-          {/* Indicadores de repeticiones */}
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: '6px' }}>
             {Array.from({ length: totalRepeticiones }).map((_, i) => (
               <div key={i} style={{
@@ -556,7 +500,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
             ))}
           </div>
 
-          {/* Overlay de ejercicio finalizado */}
           {ejercicioFinalizado && (
             <div style={{
               position: 'absolute', inset: 0,
@@ -570,13 +513,10 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
               </p>
               <button
                 onClick={() => {
-                  setPasoActual(0)
-                  setRepActual(1)
-                  setEjercicioFinalizado(false)
-                  setPasoCompletado(false)
-                  setTimeLeft(ejercicio.pasos[0].hold_sec || 3)
-                  setStatus({ result: null, fps: 0 })
-                  setTransicionando(false)
+                  setPasoActual(0); setRepActual(1); setEjercicioFinalizado(false)
+                  setPasoCompletado(false); setTimeLeft(ejercicio.pasos[0].hold_sec || 3)
+                  setStatus({ result: null, fps: 0 }); setTransicionando(false)
+                  iniciarSesion()                                        // ← NUEVO: nueva sesión al repetir
                 }}
                 style={{
                   padding: '16px 52px', borderRadius: 40,
@@ -605,34 +545,20 @@ export default function PoseDetector({ ejercicio, onBack, onComplete }: Props) {
                 ? <span style={{ color: '#555' }}>ESPERANDO USUARIO...</span>
                 : result.isValid
                   ? <span style={{ color: '#00d26e' }}>¡ASÍ ESTÁ BIEN!</span>
-                  : <span style={{ color: '#555', fontSize: 14 }}>
-                      {getScoreLabel(result.keypointResults)}
-                    </span>
+                  : <span style={{ color: '#555', fontSize: 14 }}>{getScoreLabel(result.keypointResults)}</span>
           }
         </div>
         <div style={{ textAlign: 'right' }}>
-          <span style={{
-            fontSize: 24, fontWeight: 900,
-            color: result?.isValid ? '#00d26e' : result ? '#ffcc00' : '#555',
-          }}>
+          <span style={{ fontSize: 24, fontWeight: 900, color: result?.isValid ? '#00d26e' : result ? '#ffcc00' : '#555' }}>
             {result ? Math.round(result.score * 100) : 0}%
           </span>
-          <span style={{ fontSize: 11, color: '#444', marginLeft: '8px' }}>
-            PRECISIÓN | {fps} FPS
-          </span>
+          <span style={{ fontSize: 11, color: '#444', marginLeft: '8px' }}>PRECISIÓN | {fps} FPS</span>
         </div>
       </div>
 
-      {/* ── Keyframes para el overlay ────────────────────────────────────── */}
       <style>{`
-        @keyframes fadeInOverlay {
-          from { opacity: 0; }
-          to   { opacity: 1; }
-        }
-        @keyframes transicionBar {
-          from { width: 0%; }
-          to   { width: 100%; }
-        }
+        @keyframes fadeInOverlay { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes transicionBar  { from { width: 0%; } to { width: 100%; } }
       `}</style>
     </div>
   )
