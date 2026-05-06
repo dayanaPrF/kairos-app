@@ -10,15 +10,13 @@ export interface Articulacion {
   puntos_mediapipe: string[]
 }
 
-// Una articulación dentro de una pose, con su ángulo
 export interface PoseArticulacion {
   id_articulacion: string
-  nombre_articulacion: string   // desnormalizado para el UI
+  nombre_articulacion: string
   angulo: number
   tolerancia: number
 }
 
-// Una pose = un keyframe con N articulaciones
 export interface Pose {
   tmpId: string
   orden: number
@@ -57,6 +55,29 @@ interface EjercicioBuilderProps {
   mostrarOpcionBiblioteca?: boolean
   onConfirmar: (data: EjercicioFormData) => void
   onCancelar: () => void
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Convierte los ángulos del slider (sistema visual del muñequito) al espacio
+// MediaPipe antes de guardar en BD.
+//
+// El muñequito y MediaPipe coinciden en casi todo EXCEPTO en el hombro derecho:
+// el vector muñeca→hombro apunta hacia X negativo al subir, por eso es espejado.
+//
+//   Hombro Derecho:  angulo_mp = 180 - angulo
+//   Todo lo demás:   angulo_mp = angulo  (coinciden)
+// ─────────────────────────────────────────────────────────────────────────────
+function convertirAMediaPipe(articulaciones: PoseArticulacion[]): PoseArticulacion[] {
+  return articulaciones.map(art => {
+    const n = art.nombre_articulacion.toLowerCase()
+    const esDerecho = n.includes('derecho') || n.includes('der')
+
+    if (n.includes('hombro') && esDerecho) {
+      return { ...art, angulo: 180 - art.angulo }
+    }
+
+    return art
+  })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -101,16 +122,13 @@ export function EjercicioBuilder({
   const updatePoseField = (tmpId: string, field: 'nombre' | 'hold_sec', value: string | number) =>
     update('secuencia_poses', form.secuencia_poses.map(p => p.tmpId !== tmpId ? p : {
       ...p,
-      [field]: field === 'hold_sec'
-        ? (parseFloat(value as string) || 0)  // NaN → 0
-        : value,
+      [field]: field === 'hold_sec' ? (parseFloat(value as string) || 0) : value,
     }))
 
-  // Agregar articulación a una pose
   const addArticulacion = (poseTmpId: string, art: Articulacion) =>
     update('secuencia_poses', form.secuencia_poses.map(p => {
       if (p.tmpId !== poseTmpId) return p
-      if (p.articulaciones.find(a => a.id_articulacion === art.id_articulacion)) return p // ya existe
+      if (p.articulaciones.find(a => a.id_articulacion === art.id_articulacion)) return p
       return {
         ...p,
         articulaciones: [
@@ -138,7 +156,19 @@ export function EjercicioBuilder({
   const confirmar = () => {
     if (!form.nombre_ejercicio.trim()) { setError('El nombre del ejercicio es obligatorio'); return }
     setError(null)
-    onConfirmar(form)
+
+    // ── Convertir a espacio MediaPipe solo al guardar.
+    // El muñequito sigue mostrando los ángulos del slider sin convertir,
+    // pero lo que se guarda en BD ya es lo que MediaPipe espera medir.
+    const formConvertido: EjercicioFormData = {
+      ...form,
+      secuencia_poses: form.secuencia_poses.map(pose => ({
+        ...pose,
+        articulaciones: convertirAMediaPipe(pose.articulaciones),
+      })),
+    }
+
+    onConfirmar(formConvertido)
   }
 
   return (
@@ -183,7 +213,6 @@ export function EjercicioBuilder({
           </button>
         </div>
 
-        {/* Timeline resumen */}
         {form.secuencia_poses.length > 0 && (
           <TimelinePoses poses={form.secuencia_poses} />
         )}
@@ -276,7 +305,6 @@ function PoseCard({
 }) {
   const [showSelector, setShowSelector] = useState(false)
 
-  // Articulaciones que aún no están en esta pose
   const disponibles = articulacionesDisponibles.filter(
     a => !pose.articulaciones.find(pa => pa.id_articulacion === a.id_articulacion)
   )
@@ -293,28 +321,16 @@ function PoseCard({
           placeholder="Nombre de la pose (ej. T-Pose)"
           style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.88rem', fontWeight: 700, color: 'var(--text)', outline: 'none' }} />
 
-        {/* Hold sec */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Mantener</span>
-          <input 
-            type="number" 
-            min={0} 
-            max={15} 
+          <input
+            type="number"
+            min={0}
+            max={15}
             step={0.5}
-            // 1. Usamos parseFloat para manejar los decimales del step 0.5
             onChange={e => onUpdateField('hold_sec', parseFloat(e.target.value) || 0)}
-            // 2. Un solo value con un valor por defecto (0) para evitar errores de NaN
             value={pose.hold_sec ?? 0}
-            style={{ 
-              width: '48px', 
-              padding: '3px 6px', 
-              borderRadius: '6px', 
-              border: '1px solid var(--border)', 
-              fontSize: '0.82rem', 
-              textAlign: 'center', 
-              fontWeight: 700, 
-              background: 'white' 
-            }} 
+            style={{ width: '48px', padding: '3px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.82rem', textAlign: 'center', fontWeight: 700, background: 'white' }}
           />
           <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>s</span>
         </div>
@@ -325,7 +341,7 @@ function PoseCard({
       {/* Cuerpo: muñequito + articulaciones */}
       <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', minHeight: '220px' }}>
 
-        {/* Muñequito */}
+        {/* Muñequito — recibe los ángulos del slider SIN convertir para que se vea correcto */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 8px', background: 'rgba(75,179,214,0.03)', borderRight: '1px solid rgba(75,179,214,0.1)' }}>
           <MunequitoReferencia articulaciones={pose.articulaciones} />
           {pose.articulaciones.length === 0 && (
@@ -338,7 +354,6 @@ function PoseCard({
         {/* Panel de articulaciones */}
         <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-          {/* Lista de articulaciones activas */}
           {pose.articulaciones.map(art => (
             <ArticulacionSlider
               key={art.id_articulacion}
@@ -349,7 +364,6 @@ function PoseCard({
             />
           ))}
 
-          {/* Botón agregar articulación */}
           {disponibles.length > 0 && (
             <div>
               <button
@@ -385,7 +399,6 @@ function PoseCard({
         </div>
       </div>
 
-      {/* Footer: validación simultánea */}
       {pose.articulaciones.length > 1 && (
         <div style={{ padding: '8px 16px', background: '#eef8d6', borderTop: '1px solid rgba(76,160,15,0.2)', fontSize: '0.72rem', color: '#4a7c0f', fontWeight: 600 }}>
           ✅ La IA validará esta pose cuando las {pose.articulaciones.length} articulaciones estén en rango simultáneamente
@@ -404,7 +417,6 @@ function ArticulacionSlider({ art, onChangeAngulo, onChangeTol, onRemove }: {
 }) {
   return (
     <div style={{ borderRadius: '10px', border: '1px solid rgba(75,179,214,0.25)', background: 'white', overflow: 'hidden' }}>
-      {/* Nombre articulación */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 12px', background: 'rgba(75,179,214,0.06)', borderBottom: '1px solid rgba(75,179,214,0.12)' }}>
         <span style={{ fontSize: '1rem' }}>{articulacionIcon(art.nombre_articulacion)}</span>
         <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--text)', flex: 1 }}>{art.nombre_articulacion}</span>
@@ -413,7 +425,6 @@ function ArticulacionSlider({ art, onChangeAngulo, onChangeTol, onRemove }: {
       </div>
 
       <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {/* Ángulo */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
             <label style={{ ...labelStyle, marginBottom: 0 }}>Ángulo objetivo</label>
@@ -427,7 +438,6 @@ function ArticulacionSlider({ art, onChangeAngulo, onChangeTol, onRemove }: {
           </div>
         </div>
 
-        {/* Tolerancia */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
             <label style={{ ...labelStyle, marginBottom: 0 }}>Tolerancia</label>
@@ -442,11 +452,7 @@ function ArticulacionSlider({ art, onChangeAngulo, onChangeTol, onRemove }: {
   )
 }
 
-// ─── Helpers SVG ──────────────────────────────────────────────────────────────
-function Dot({ cx, cy, r, fill, stroke }: { cx: number; cy: number; r: number; fill: string; stroke: string }) {
-  return <circle cx={cx} cy={cy} r={r} fill={fill} stroke={stroke} strokeWidth="1.5"/>
-}
-
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function articulacionIcon(nombre: string): string {
   const n = nombre.toLowerCase()
   if (n.includes('codo'))    return '💪'
@@ -459,8 +465,23 @@ function articulacionIcon(nombre: string): string {
   return '⚙️'
 }
 
+/**
+ * Describe el ángulo en el sistema visual del muñequito (lo que ve el fisio).
+ * Hombro: 0°=arriba, 90°=horizontal, 180°=abajo/costado
+ * Codo/Rodilla: 180°=extendido, 0°=máxima flexión
+ * Cadera: 90°=de pie, 0°=horizontal adelante
+ */
 function describeAngulo(angulo: number, art: string): string {
   const n = art.toLowerCase()
+
+  if (n.includes('hombro')) {
+    if (angulo <= 20)  return 'Brazo arriba'
+    if (angulo <= 70)  return 'Elevación alta'
+    if (angulo <= 110) return 'Horizontal (T)'
+    if (angulo <= 150) return 'Elevación baja'
+    return 'Brazo al costado'
+  }
+
   if (n.includes('codo')) {
     if (angulo >= 160) return 'Extendido'
     if (angulo >= 110) return 'Casi extendido'
@@ -468,13 +489,7 @@ function describeAngulo(angulo: number, art: string): string {
     if (angulo >= 30)  return 'Muy flexionado'
     return 'Máxima flexión'
   }
-  if (n.includes('hombro')) {
-    if (angulo <= 20)  return 'Brazo al costado'
-    if (angulo <= 70)  return 'Elevación baja'
-    if (angulo <= 110) return 'Horizontal (T)'
-    if (angulo <= 150) return 'Elevación alta'
-    return 'Brazo sobre cabeza'
-  }
+
   if (n.includes('rodilla')) {
     if (angulo >= 160) return 'Extendida'
     if (angulo >= 110) return 'Flexión leve'
@@ -482,21 +497,24 @@ function describeAngulo(angulo: number, art: string): string {
     if (angulo >= 30)  return 'Flexión profunda'
     return 'Máxima flexión'
   }
+
   if (n.includes('cadera')) {
-    if (angulo >= 160) return 'Pierna extendida'
-    if (angulo >= 110) return 'Flexión ligera'
-    if (angulo >= 70)  return 'Sentado (90°)'
-    if (angulo >= 30)  return 'Flexión profunda'
+    if (angulo >= 80)  return 'De pie'
+    if (angulo >= 40)  return 'Flexión ligera'
+    if (angulo >= 10)  return 'Horizontal'
     return 'Máxima flexión'
   }
+
   if (n.includes('tobillo')) {
     if (angulo >= 110) return 'Dorsiflexión'
     if (angulo >= 80)  return 'Neutro'
     if (angulo >= 50)  return 'Flexión plantar'
     return 'Punta de pie'
   }
+
   if (n.includes('tronco'))  return angulo >= 150 ? 'Erguido' : angulo >= 100 ? 'Inclinación leve' : 'Inclinación lateral'
   if (n.includes('cuello'))  return angulo >= 110 ? 'Inc. derecha' : angulo >= 70 ? 'Neutro' : 'Inc. izquierda'
+
   return `${angulo}°`
 }
 
@@ -507,7 +525,6 @@ const inputStyle: React.CSSProperties = {
   fontSize: '0.85rem', color: 'var(--text)', outline: 'none',
   boxSizing: 'border-box', fontFamily: 'inherit',
 }
-const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
 const labelStyle: React.CSSProperties = {
   display: 'block', fontSize: '0.72rem', fontWeight: 600,
   color: 'var(--text-light)', marginBottom: '5px',
