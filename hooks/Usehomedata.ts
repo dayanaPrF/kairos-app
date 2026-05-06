@@ -153,13 +153,27 @@ export function useHomeData(): HomeData {
         // ── 4. Fisioterapeuta principal ──────────────────────────────────────
         let fisioInfo = null
 
-        const { data: relFisio } = await supabase
+        // Intenta primero con es_principal=true, si no hay toma cualquier fisio asignado
+        const { data: relFisioPrincipal } = await supabase
           .from('paciente_fisioterapeuta')
           .select('id_fisioterapeuta')
           .eq('id_paciente', user.id)
           .eq('es_principal', true)
-          .is('deleted_at', null)                               // ← NUEVO: por si acaso
+          .is('deleted_at', null)
           .maybeSingle()
+
+        const { data: relFisioCualquiera } = !relFisioPrincipal
+          ? await supabase
+              .from('paciente_fisioterapeuta')
+              .select('id_fisioterapeuta')
+              .eq('id_paciente', user.id)
+              .is('deleted_at', null)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+          : { data: null }
+
+        const relFisio = relFisioPrincipal ?? relFisioCualquiera
 
         if (relFisio?.id_fisioterapeuta) {
           const fisioId = relFisio.id_fisioterapeuta
