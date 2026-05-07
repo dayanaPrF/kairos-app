@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { enviarNotificacion } from '@/lib/notificaciones'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface Cita {
@@ -275,6 +276,14 @@ export function FisioSectionAgenda() {
 
       const { error } = await supabase.from('cita').upsert(payload)
       if (error) throw error
+      if (modalMode === 'nueva') {
+        await enviarNotificacion(
+          citaForm.id_paciente,
+          'Nueva Cita Programada',
+          `Se ha agendado una cita para el ${citaForm.fecha_cita} a las ${citaForm.hora_inicio}. Motivo: ${citaForm.motivo_cita}`,
+          'cita'
+        )
+      }
       setModalMode(null)
       await recargar()
     } catch (err: any) {
