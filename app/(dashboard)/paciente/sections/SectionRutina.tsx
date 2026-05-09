@@ -12,6 +12,7 @@ interface EjercicioResumen {
   icono: string | null
   repeticiones: number | null
   tiene_ia: boolean
+  es_catalogo: boolean          // ← nuevo
   total_poses: number
   total_articulaciones: number
   fase_nombre: string
@@ -80,12 +81,12 @@ export function SectionRutina() {
         setEjercicios([]); setLoading(false); return
       }
 
-      // 3. Traer los ejercicios de todas las fases
+      // 3. Traer los ejercicios de todas las fases — ahora incluye id_ejercicio_catalogo
       const { data: ejsRaw, error: errE } = await supabase
         .from('ejercicio')
         .select(`
           id_ejercicio, nombre_ejercicio, descripcion, icono, repeticiones,
-          id_fase, secuencia_poses, secuencia_poses_personalizada,
+          id_fase, id_ejercicio_catalogo, secuencia_poses, secuencia_poses_personalizada,
           biblioteca_ejercicio ( secuencia_poses )
         `)
         .in('id_fase', fases.map(f => f.id_fase))
@@ -96,12 +97,56 @@ export function SectionRutina() {
         setEjercicios([]); setLoading(false); return
       }
 
-      // 4. Mapear a EjercicioResumen
+      // 4. Para ejercicios del catálogo, resolver cuántas poses/keypoints tienen
+      //    para mostrarlo en la UI (opcional pero informativo)
+      const catalogoIds = ejsRaw
+        .map(e => (e as any).id_ejercicio_catalogo as string | null)
+        .filter(Boolean) as string[]
+
+      // Mapa: id_ejercicio_catalogo → { total_poses, total_keypoints }
+      const catalogoInfoMap = new Map<string, { poses: number; keypoints: number }>()
+
+      if (catalogoIds.length) {
+        const { data: ejsCat } = await supabase
+          .from('ai_ejercicio_catalogo')
+          .select('id_ejercicio_catalogo, poses_secuencia')
+          .in('id_ejercicio_catalogo', catalogoIds)
+
+        if (ejsCat?.length) {
+          const poseIds = ejsCat.flatMap(ec =>
+            (ec.poses_secuencia as any[]).map((p: any) => p.id_pose as string)
+          )
+
+          const { data: posesCat } = await supabase
+            .from('ai_pose_catalogo')
+            .select('id_pose, keypoints')
+            .in('id_pose', poseIds)
+
+          const poseKpMap = new Map(
+            (posesCat ?? []).map(p => [p.id_pose, (p.keypoints as any[]).length])
+          )
+
+          for (const ec of ejsCat) {
+            const secuencia = ec.poses_secuencia as any[]
+            const totalKp   = secuencia.reduce((acc, p) => acc + (poseKpMap.get(p.id_pose) ?? 0), 0)
+            catalogoInfoMap.set(ec.id_ejercicio_catalogo, {
+              poses:     secuencia.length,
+              keypoints: totalKp,
+            })
+          }
+        }
+      }
+
+      // 5. Mapear a EjercicioResumen
       const faseMap = Object.fromEntries(fases.map(f => [f.id_fase, f]))
 
       const resumen: EjercicioResumen[] = ejsRaw.map(ej => {
-        const bibRaw = (ej as any).biblioteca_ejercicio
-        const bib    = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
+        const bibRaw       = (ej as any).biblioteca_ejercicio
+        const bib          = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
+        const esDeCatalogo = !!(ej as any).id_ejercicio_catalogo
+        const catInfo      = esDeCatalogo
+          ? catalogoInfoMap.get((ej as any).id_ejercicio_catalogo) ?? { poses: 0, keypoints: 0 }
+          : null
 
         const poses: any[] =
           (ej.secuencia_poses_personalizada as any[] | null) ??
@@ -115,16 +160,17 @@ export function SectionRutina() {
 
         const fase = faseMap[ej.id_fase]
         return {
-          id_ejercicio:       ej.id_ejercicio,
-          nombre_ejercicio:   ej.nombre_ejercicio,
-          descripcion:        ej.descripcion,
-          icono:              ej.icono,
-          repeticiones:       ej.repeticiones,
-          tiene_ia:           poses.length > 0,
-          total_poses:        poses.length,
-          total_articulaciones: totalArts,
-          fase_nombre:        fase?.nombre_fase ?? '',
-          fase_numero:        fase?.numero_fase ?? 0,
+          id_ejercicio:        ej.id_ejercicio,
+          nombre_ejercicio:    ej.nombre_ejercicio,
+          descripcion:         ej.descripcion,
+          icono:               ej.icono,
+          repeticiones:        ej.repeticiones,
+          es_catalogo:         esDeCatalogo,
+          tiene_ia:            esDeCatalogo || poses.length > 0,
+          total_poses:         esDeCatalogo ? (catInfo?.poses ?? 0)     : poses.length,
+          total_articulaciones: esDeCatalogo ? (catInfo?.keypoints ?? 0) : totalArts,
+          fase_nombre:         fase?.nombre_fase ?? '',
+          fase_numero:         fase?.numero_fase ?? 0,
         }
       })
 
@@ -230,7 +276,13 @@ export function SectionRutina() {
                     <div className="dash-ri-title">{ej.nombre_ejercicio}</div>
                     <div className="dash-ri-sub">
                       {ej.tiene_ia
-                        ? `🤖 ${ej.total_poses} poses · ${ej.total_articulaciones} articulaciones monitoreadas`
+                        ? ej.es_catalogo
+                          // Ejercicio del catálogo: mostrar poses y keypoints si los tenemos
+                          ? ej.total_poses > 0
+                            ? `🤖 ${ej.total_poses} poses · ${ej.total_articulaciones} puntos monitoreados`
+                            : '🤖 Evaluación IA por catálogo'
+                          // Ejercicio legacy con articulaciones
+                          : `🤖 ${ej.total_poses} poses · ${ej.total_articulaciones} articulaciones monitoreadas`
                         : 'Sin evaluación IA — ejercicio manual'}
                       {ej.repeticiones && ` · ${ej.repeticiones} reps`}
                     </div>
@@ -271,9 +323,13 @@ export function SectionRutina() {
                   {selected.descripcion ?? 'Sin descripción adicional.'}
                 </p>
                 <div className="doc-tip" style={{ background: 'var(--blue-xlight)', border: '1px solid var(--blue-light)' }}>
-                  <strong>Configuración:</strong> El sistema validará{' '}
-                  <strong>{selected.total_articulaciones} ángulos</strong> distribuidos en{' '}
-                  <strong>{selected.total_poses} poses</strong> en tiempo real.
+                  <strong>Configuración:</strong>{' '}
+                  {selected.es_catalogo
+                    ? selected.total_poses > 0
+                      ? <>El sistema validará <strong>{selected.total_articulaciones} puntos</strong> distribuidos en <strong>{selected.total_poses} poses</strong> en tiempo real.</>
+                      : 'Ejercicio con evaluación IA por poses predefinidas del catálogo.'
+                    : <>El sistema validará <strong>{selected.total_articulaciones} ángulos</strong> distribuidos en <strong>{selected.total_poses} poses</strong> en tiempo real.</>
+                  }
                   {selected.repeticiones && ` Realiza ${selected.repeticiones} repeticiones.`}
                 </div>
               </div>
