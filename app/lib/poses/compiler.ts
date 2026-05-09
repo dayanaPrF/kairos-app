@@ -2,139 +2,214 @@ import { supabase } from '@/lib/supabase'
 import type {
   PoseDB,
   ArticulacionConfig,
+  KeypointRule,
   PoseCompiledStep,
   EjercicioCompilado,
 } from './types'
-import { convertirAnguloMunequitoAMediaPipe } from '@/app/lib/poses/angleConverter'
+import { detectarTipo } from '@/app/lib/poses/angleConverter'
 
-/**
- * Tolerancia mínima en grados que se aplica en CADA dirección.
- *
- * Si en BD guardas angulo=90, tolerancia=5 → rango sería [85, 95] (solo 10°).
- * Con MIN_TOLERANCE=15 el rango efectivo será [75, 105] (30°), mucho más
- * alcanzable con el ruido real de cámara y variaciones de postura.
- *
- * Ajusta este valor según qué tan estricto quieras el sistema:
- *   - 10° → ejercicios precisos (fisioterapia muy controlada)
- *   - 15° → balance entre precisión y usabilidad  ← recomendado
- *   - 20° → muy permisivo, bueno para onboarding
- *
- * La tolerancia de BD sigue siendo el objetivo visual en el muñequito,
- * pero en runtime se usa max(tolerancia_BD, MIN_TOLERANCE).
- */
-const MIN_TOLERANCE_DEG = 15
+// ─── Tipos del catálogo ───────────────────────────────────────────────────────
 
-/**
- * Toma un ejercicio crudo de Supabase y lo "compila" al formato
- * que PoseDetector y validatePose necesitan.
- */
+export interface PoseCatalogo {
+  id_pose:     string
+  nombre:      string
+  descripcion: string | null
+  imagen_url:  string | null
+  categoria:   string | null
+  dificultad:  number
+  keypoints:   KeypointRule[]
+}
+
+export interface PoseSecuenciaItem {
+  orden:           number
+  id_pose:         string
+  hold_sec:        number
+  nombre_override: string | null
+}
+
+export interface EjercicioCatalogo {
+  id_ejercicio_catalogo:  string
+  nombre:                 string
+  descripcion:            string | null
+  imagen_url:             string | null
+  icono:                  string | null
+  categoria:              string | null
+  dificultad:             number
+  repeticiones_sugeridas: number | null
+  poses_secuencia:        PoseSecuenciaItem[]
+}
+
+// ─── Tipo extendido para soportar Modo 2 ─────────────────────────────────────
+// Las poses del Modo 2 tienen id_pose pero articulaciones: []
+interface PoseDBConIdPose extends PoseDB {
+  id_pose?: string
+}
+
+// ─── Tolerancia mínima ────────────────────────────────────────────────────────
+const MIN_TOLERANCE: Record<string, number> = {
+  hombro:  15, codo:    15, rodilla: 15,
+  cadera:  20, tobillo: 20, tronco:  10, cuello: 10,
+}
+
+function getTolerance(nombreArticulacion: string, toleranciaDB: number): number {
+  const tipo = detectarTipo(nombreArticulacion)
+  return Math.max(toleranciaDB, tipo ? (MIN_TOLERANCE[tipo] ?? 15) : 15)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// compilarEjercicio
+//
+//   Modo 1 → id_ejercicio_catalogo presente
+//   Modo 2 → secuencia_poses con id_pose (poses sueltas del catálogo)  ← FIX
+//   Modo 3 → flujo legacy con articulaciones
+// ══════════════════════════════════════════════════════════════════════════════
 export async function compilarEjercicio(
   ejercicio: {
-    id_ejercicio: string
-    nombre_ejercicio: string
-    descripcion: string | null
-    icono: string | null
-    repeticiones: number | null
-    secuencia_poses: PoseDB[] | null
+    id_ejercicio:                  string
+    nombre_ejercicio:              string
+    descripcion:                   string | null
+    icono:                         string | null
+    repeticiones:                  number | null
+    id_ejercicio_catalogo?:        string | null
+    secuencia_poses:               PoseDBConIdPose[] | null
     secuencia_poses_personalizada: PoseDB[] | null
-    biblioteca_ejercicio: { secuencia_poses: PoseDB[] } | { secuencia_poses: PoseDB[] }[] | null
+    biblioteca_ejercicio:
+      | { secuencia_poses: PoseDB[] }
+      | { secuencia_poses: PoseDB[] }[]
+      | null
   }
 ): Promise<EjercicioCompilado | null> {
 
-  // 1. Resolver qué secuencia de poses usar
-  const bibRaw = ejercicio.biblioteca_ejercicio
-  const bib    = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
-
-  const poses: PoseDB[] =
-    ejercicio.secuencia_poses_personalizada ??
-    bib?.secuencia_poses ??
-    ejercicio.secuencia_poses ??
-    []
-
-  if (poses.length === 0) return null
-
-  // 2. Recolectar todos los id_articulacion únicos necesarios
-  const idsNecesarios = new Set<string>()
-  for (const pose of poses) {
-    for (const art of pose.articulaciones) {
-      idsNecesarios.add(art.id_articulacion)
-    }
+  // Modo 1: ejercicio predefinido del catálogo
+  if (ejercicio.id_ejercicio_catalogo) {
+    return compilarDesde_Catalogo(ejercicio)
   }
-  if (idsNecesarios.size === 0) return null
 
-  // 3. Traer los puntos_mediapipe de esas articulaciones
-  const { data: configs, error } = await supabase
-    .from('ai_articulacion_config')
-    .select('id_articulacion, nombre_articulacion, puntos_mediapipe')
-    .in('id_articulacion', Array.from(idsNecesarios))
+  // Modo 2: poses sueltas del catálogo
+  // Detectado por la presencia de id_pose en secuencia_poses.
+  // Estas poses tienen articulaciones: [] — keypoints vienen del catálogo.
+  const posesConIdPose = (ejercicio.secuencia_poses ?? []).filter(p => !!(p as any).id_pose)
+  if (posesConIdPose.length > 0) {
+    return compilarDesde_PosesCatalogo(ejercicio, posesConIdPose)
+  }
 
-  if (error || !configs?.length) {
-    console.error('Error cargando ai_articulacion_config:', error)
+  // Modo 3: flujo legacy con articulaciones
+  return compilarDesde_Legacy(ejercicio)
+}
+
+// ─── Modo 1: ejercicio predefinido del catálogo ───────────────────────────────
+
+async function compilarDesde_Catalogo(ejercicio: {
+  id_ejercicio:           string
+  nombre_ejercicio:       string
+  descripcion:            string | null
+  icono:                  string | null
+  repeticiones:           number | null
+  id_ejercicio_catalogo?: string | null
+}): Promise<EjercicioCompilado | null> {
+
+  const { data: ejCat, error: errEj } = await supabase
+    .from('ai_ejercicio_catalogo')
+    .select('nombre, icono, repeticiones_sugeridas, poses_secuencia')
+    .eq('id_ejercicio_catalogo', ejercicio.id_ejercicio_catalogo!)
+    .single()
+
+  if (errEj || !ejCat) {
+    console.error('[Compiler Modo 1] catálogo no encontrado:', errEj)
     return null
   }
 
-  const configMap = new Map<string, ArticulacionConfig>(
-    configs.map(c => [c.id_articulacion, c])
-  )
+  const secuencia = ejCat.poses_secuencia as PoseSecuenciaItem[]
+  if (!secuencia?.length) return null
 
-  // 4. Compilar cada pose aplicando tolerancia mínima garantizada
-  const pasos: PoseCompiledStep[] = poses
+  const poseIds = secuencia.map(s => s.id_pose)
+  const { data: poses, error: errPoses } = await supabase
+    .from('ai_pose_catalogo')
+    .select('id_pose, nombre, keypoints')
+    .in('id_pose', poseIds)
+
+  if (errPoses || !poses?.length) {
+    console.error('[Compiler Modo 1] poses no encontradas:', errPoses)
+    return null
+  }
+
+  const poseMap = new Map(poses.map(p => [p.id_pose, p]))
+
+  const pasos: PoseCompiledStep[] = secuencia
     .sort((a, b) => a.orden - b.orden)
-    .map(pose => ({
-      orden:    pose.orden,
-      nombre:   pose.nombre,
-      hold_sec: pose.hold_sec,
-      keypoints: pose.articulaciones.flatMap(art => {
-        const cfg = configMap.get(art.id_articulacion)
-        if (!cfg || cfg.puntos_mediapipe.length < 3) return []
+    .flatMap(item => {
+      const pose = poseMap.get(item.id_pose)
+      if (!pose) return []
+      const keypoints = pose.keypoints as KeypointRule[]
+      if (!keypoints?.length) return []
+      return [{
+        orden:    item.orden,
+        nombre:   item.nombre_override ?? pose.nombre,
+        hold_sec: item.hold_sec,
+        keypoints,
+      }]
+    })
 
-        const [idxA, idxB, idxC] = cfg.puntos_mediapipe.map(Number)
+  if (!pasos.length) return null
 
-        // ── Convertir ángulo del muñequito al sistema de MediaPipe ────────────
-        const anguloConvertido   = convertirAnguloMunequitoAMediaPipe(art.angulo, art.nombre_articulacion)
-        const toleranciaEfectiva = Math.max(art.tolerancia, MIN_TOLERANCE_DEG)
-        const minAngle           = Math.max(0,   anguloConvertido - toleranciaEfectiva)
-        const maxAngle           = Math.min(180, anguloConvertido + toleranciaEfectiva)
+  return {
+    id_ejercicio:     ejercicio.id_ejercicio,
+    nombre_ejercicio: ejercicio.nombre_ejercicio || ejCat.nombre,
+    descripcion:      ejercicio.descripcion,
+    icono:            ejercicio.icono ?? ejCat.icono,
+    repeticiones:     ejercicio.repeticiones ?? ejCat.repeticiones_sugeridas,
+    pasos,
+  }
+}
 
-        // ── ORDEN DE puntos_mediapipe EN BD ───────────────────────────────────
-        // La convención que usa este compiler es:
-        //   [0] = idxA  → punto extremo A  (ej: muñeca)
-        //   [1] = idxB  → VÉRTICE           (ej: hombro)  ← donde se mide el ángulo
-        //   [2] = idxC  → punto extremo C  (ej: cadera)
-        //
-        // Si ves ángulos incorrectos (~30° cuando debería ser ~150°), el orden
-        // en BD probablemente está como [vértice, A, C] en lugar de [A, vértice, C].
-        //
-        // Índices MediaPipe:
-        //   11=hombro izq  12=hombro der  13=codo izq  14=codo der
-        //   15=muñeca izq  16=muñeca der  23=cadera izq 24=cadera der
-        //   25=rodilla izq 26=rodilla der 27=tobillo izq 28=tobillo der
-        //
-        // HOMBRO DERECHO correcto: ["16", "12", "24"]  (muñeca → hombro ← cadera)
-        // CODO DERECHO correcto:   ["12", "14", "16"]  (hombro → codo ← muñeca)
+// ─── Modo 2: poses sueltas del catálogo ──────────────────────────────────────
+// secuencia_poses tiene: { orden, nombre, hold_sec, id_pose, articulaciones: [] }
+// Resolvemos keypoints leyendo ai_pose_catalogo por id_pose.
 
-        if (process.env.NODE_ENV === 'development') {
-          console.info(
-            `[compiler] ${art.nombre_articulacion}: ` +
-            `puntos=[${idxA}, ${idxB}(vértice), ${idxC}] ` +
-            `BD=${art.angulo}° → convertido=${anguloConvertido}° ` +
-            `±${toleranciaEfectiva}° → rango [${minAngle}°, ${maxAngle}°]`
-          )
-        }
+async function compilarDesde_PosesCatalogo(
+  ejercicio: {
+    id_ejercicio:     string
+    nombre_ejercicio: string
+    descripcion:      string | null
+    icono:            string | null
+    repeticiones:     number | null
+  },
+  posesSecuencia: PoseDBConIdPose[]
+): Promise<EjercicioCompilado | null> {
 
-        return [{
-          landmark:           idxB,
-          relativeTo:         idxA,
-          anchor:             idxC,
-          minAngle,
-          maxAngle,
-          nombreArticulacion: art.nombre_articulacion,
-        }]
-      }),
-    }))
-    .filter(p => p.keypoints.length > 0)
+  const poseIds = posesSecuencia
+    .map(p => (p as any).id_pose as string)
+    .filter(Boolean)
 
-  if (pasos.length === 0) return null
+  const { data: posesCatalogo, error } = await supabase
+    .from('ai_pose_catalogo')
+    .select('id_pose, nombre, keypoints')
+    .in('id_pose', poseIds)
+
+  if (error || !posesCatalogo?.length) {
+    console.error('[Compiler Modo 2] poses del catálogo no encontradas:', error)
+    return null
+  }
+
+  const poseMap = new Map(posesCatalogo.map(p => [p.id_pose, p]))
+
+  const pasos: PoseCompiledStep[] = posesSecuencia
+    .sort((a, b) => a.orden - b.orden)
+    .flatMap(poseSeq => {
+      const id_pose = (poseSeq as any).id_pose as string
+      const poseCat = poseMap.get(id_pose)
+      if (!poseCat) return []
+      const keypoints = poseCat.keypoints as KeypointRule[]
+      if (!keypoints?.length) return []
+      return [{
+        orden:    poseSeq.orden,
+        nombre:   poseSeq.nombre || poseCat.nombre,
+        hold_sec: poseSeq.hold_sec,
+        keypoints,
+      }]
+    })
+
+  if (!pasos.length) return null
 
   return {
     id_ejercicio:     ejercicio.id_ejercicio,
@@ -144,4 +219,113 @@ export async function compilarEjercicio(
     repeticiones:     ejercicio.repeticiones,
     pasos,
   }
+}
+
+// ─── Modo 3: flujo legacy con articulaciones ─────────────────────────────────
+
+async function compilarDesde_Legacy(ejercicio: {
+  id_ejercicio:                  string
+  nombre_ejercicio:              string
+  descripcion:                   string | null
+  icono:                         string | null
+  repeticiones:                  number | null
+  secuencia_poses:               PoseDB[] | null
+  secuencia_poses_personalizada: PoseDB[] | null
+  biblioteca_ejercicio:
+    | { secuencia_poses: PoseDB[] }
+    | { secuencia_poses: PoseDB[] }[]
+    | null
+}): Promise<EjercicioCompilado | null> {
+
+  const bibRaw = ejercicio.biblioteca_ejercicio
+  const bib    = Array.isArray(bibRaw) ? bibRaw[0] : bibRaw
+
+  const poses: PoseDB[] =
+    ejercicio.secuencia_poses_personalizada ??
+    bib?.secuencia_poses ??
+    ejercicio.secuencia_poses ??
+    []
+
+  if (!poses.length) return null
+
+  const idsNecesarios = new Set<string>()
+  for (const pose of poses)
+    for (const art of pose.articulaciones)
+      idsNecesarios.add(art.id_articulacion)
+
+  if (!idsNecesarios.size) return null
+
+  const { data: configs, error } = await supabase
+    .from('ai_articulacion_config')
+    .select('id_articulacion, nombre_articulacion, puntos_mediapipe')
+    .in('id_articulacion', Array.from(idsNecesarios))
+
+  if (error || !configs?.length) return null
+
+  const configMap = new Map<string, ArticulacionConfig>(
+    configs.map(c => [c.id_articulacion, c])
+  )
+
+  const pasos: PoseCompiledStep[] = poses
+    .sort((a, b) => a.orden - b.orden)
+    .map(pose => ({
+      orden:    pose.orden,
+      nombre:   pose.nombre,
+      hold_sec: pose.hold_sec,
+      keypoints: pose.articulaciones.flatMap(art => {
+        const cfg = configMap.get(art.id_articulacion)
+        if (!cfg || cfg.puntos_mediapipe.length < 3) return []
+        const [idxA, idxB, idxC] = cfg.puntos_mediapipe.map(Number)
+        const anguloMP           = art.angulo
+        const toleranciaEfectiva = getTolerance(art.nombre_articulacion, art.tolerancia)
+        const esExtremoAlto      = anguloMP >= 155
+        const esExtremoBajo      = anguloMP <= 25
+        return [{
+          landmark:           idxB,
+          relativeTo:         idxA,
+          anchor:             idxC,
+          minAngle:           esExtremoBajo ? 0   : Math.max(0,   anguloMP - toleranciaEfectiva),
+          maxAngle:           esExtremoAlto ? 180 : Math.min(180, anguloMP + toleranciaEfectiva),
+          nombreArticulacion: art.nombre_articulacion,
+        }]
+      }),
+    }))
+    .filter(p => p.keypoints.length > 0)
+
+  if (!pasos.length) return null
+
+  return {
+    id_ejercicio:     ejercicio.id_ejercicio,
+    nombre_ejercicio: ejercicio.nombre_ejercicio,
+    descripcion:      ejercicio.descripcion,
+    icono:            ejercicio.icono,
+    repeticiones:     ejercicio.repeticiones,
+    pasos,
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Helpers para el builder del fisio
+// ══════════════════════════════════════════════════════════════════════════════
+
+export async function cargarPosesCatalogo(): Promise<PoseCatalogo[]> {
+  const { data, error } = await supabase
+    .from('ai_pose_catalogo')
+    .select('id_pose, nombre, descripcion, imagen_url, categoria, dificultad, keypoints')
+    .eq('activa', true)
+    .order('categoria')
+    .order('nombre')
+  if (error) { console.error('cargarPosesCatalogo:', error); return [] }
+  return (data ?? []) as PoseCatalogo[]
+}
+
+export async function cargarEjerciciosCatalogo(): Promise<EjercicioCatalogo[]> {
+  const { data, error } = await supabase
+    .from('ai_ejercicio_catalogo')
+    .select('id_ejercicio_catalogo, nombre, descripcion, imagen_url, icono, categoria, dificultad, repeticiones_sugeridas, poses_secuencia')
+    .eq('activo', true)
+    .order('categoria')
+    .order('nombre')
+  if (error) { console.error('cargarEjerciciosCatalogo:', error); return [] }
+  return (data ?? []) as EjercicioCatalogo[]
 }

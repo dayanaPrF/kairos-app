@@ -1,40 +1,43 @@
 /**
  * CONVERSIÓN DE ÁNGULOS: Muñequito → MediaPipe
  *
- * RESUMEN DE CONVERSIONES POR ARTICULACIÓN:
+ * ════════════════════════════════════════════════════════════════════════════
+ * CÓMO MIDE MEDIAPIPE CADA ARTICULACIÓN
+ * angleBetween(A, B, C) = ángulo en el vértice B entre vectores BA y BC
+ * ════════════════════════════════════════════════════════════════════════════
  *
- * ─── Hombro ────────────────────────────────────────────────────────────────────
- * Muñequito: 0=arriba, 90=horizontal(T), 180=abajo
- * MediaPipe [muñeca, hombro, cadera]:
- *   - Hombro IZQUIERDO: vector muñeca apunta hacia X positivo al subir → coincide
- *   - Hombro DERECHO:   vector muñeca apunta hacia X negativo al subir → espejado
+ * ── HOMBRO  [muñeca(A), hombro(B), cadera(C)] ────────────────────────────
+ *   Brazo abajo (reposo) → ~180°   Brazo horizontal (T) → ~90°
+ *   Brazo arriba         → ~0°
+ *   Muñequito: 0=arriba, 90=T, 180=abajo → coincide 1:1 con MP izquierdo
+ *   Derecho: la cadera C está al lado contrario → ángulo espejado
+ *     angulo_mp = 180 - angulo
  *
- * Conversión:
- *   Izquierdo: angulo_mp = angulo
- *   Derecho:   angulo_mp = 180 - angulo
+ * ── CODO  [hombro(A), codo(B), muñeca(C)] ────────────────────────────────
+ *   Extendido → ~180°   Flexión 90° → ~90°   Máxima flexión → ~30°
+ *   Muñequito: 180=extendido, 0=máxima flexión → coincide 1:1, ambos lados
+ *   → sin conversión
  *
- * ─── Codo ──────────────────────────────────────────────────────────────────────
- * Ambos usan ángulo interior → COINCIDEN en ambos lados
+ * ── RODILLA  [cadera(A), rodilla(B), tobillo(C)] ─────────────────────────
+ *   Extendida → ~180°   Flexión 90° → ~90°   Máxima flexión → ~30°
+ *   Muñequito: 180=extendida, 0=máxima flexión → coincide 1:1, ambos lados
+ *   → sin conversión
  *
- * ─── Rodilla ───────────────────────────────────────────────────────────────────
- * Ambos usan ángulo interior → COINCIDEN en ambos lados
+ * ── CADERA  [hombro(A), cadera(B), rodilla(C)] ───────────────────────────
+ *   De pie erguido → ~180°   Flexión de cadera 90° → ~90°
+ *   Muñequito: 90=de pie, 0=horizontal adelante
+ *   → Izquierdo: angulo_mp = angulo + 90
+ *   → Derecho:   el hombro A está al lado contrario
+ *                angulo_mp = 90 - angulo  (clamp [0, 180])
  *
- * ─── Cadera ────────────────────────────────────────────────────────────────────
- * Muñequito: 90=de pie, 0=horizontal adelante
- * MediaPipe [hombro, cadera, rodilla]: 180=de pie, 90=horizontal
+ * ── TOBILLO  [rodilla(A), tobillo(B), pie(C)] ────────────────────────────
+ *   Neutro anatómico → ~90°   Dorsiflexión → >90°   Plantar → <90°
+ *   Muñequito: 90=neutro, >90=dorsiflexión, <90=plantar → coincide 1:1
+ *   → sin conversión
  *
- * Conversión:
- *   Izquierdo: angulo_mp = angulo + 90
- *   Derecho:   el hombro de referencia está al lado opuesto →
- *              angulo_mp = 180 - (angulo + 90) = 90 - angulo
- *              (clamp a [0, 180])
- *
- * ─── Tobillo ───────────────────────────────────────────────────────────────────
- * Muñequito desde horizontal → MediaPipe entre tibia y pie
- * Conversión: angulo_mp = angulo + 90 (ambos lados, pie simétrico)
- *
- * ─── Tronco / Cuello ───────────────────────────────────────────────────────────
- * Inclinaciones pequeñas — usar directo
+ * ── TRONCO / CUELLO ───────────────────────────────────────────────────────
+ *   Inclinaciones pequeñas → pasar directo
+ * ════════════════════════════════════════════════════════════════════════════
  */
 
 export type ArticulacionTipo =
@@ -46,9 +49,6 @@ export type ArticulacionTipo =
   | 'tronco'
   | 'cuello'
 
-/**
- * Detecta el tipo de articulación a partir del nombre en BD.
- */
 export function detectarTipo(nombre: string): ArticulacionTipo | null {
   const n = nombre.toLowerCase()
   if (n.includes('hombro'))  return 'hombro'
@@ -62,45 +62,46 @@ export function detectarTipo(nombre: string): ArticulacionTipo | null {
 }
 
 /**
- * Convierte el ángulo guardado desde el muñequito al ángulo real
- * que mide angleBetween con los landmarks de MediaPipe.
- *
- * Aplica esta conversión en el compiler, no en runtime.
+ * Convierte el ángulo guardado en el builder (sistema visual del muñequito)
+ * al ángulo que realmente mide MediaPipe con angleBetween.
  */
 export function convertirAnguloMunequitoAMediaPipe(
   angulo: number,
-  nombreArticulacion: string
+  nombreArticulacion: string,
 ): number {
-  const tipo = detectarTipo(nombreArticulacion)
-  const n    = nombreArticulacion.toLowerCase()
+  const tipo      = detectarTipo(nombreArticulacion)
+  const n         = nombreArticulacion.toLowerCase()
   const esDerecho = n.includes('derecho') || n.includes('der')
 
   switch (tipo) {
+
     case 'hombro':
-      // Hombro derecho: vector muñeca apunta al lado opuesto → espejar
-      // Hombro izquierdo: coincide directo
+      // Izquierdo: coincide 1:1
+      // Derecho:   la cadera de referencia queda al lado opuesto → espejar
       return esDerecho ? 180 - angulo : angulo
 
     case 'codo':
-      // Ángulo interior — coincide en ambos lados
+      // Ángulo interior hombro→codo→muñeca — igual en ambos lados
+      // El muñequito y MP usan el mismo sistema: 180=extendido, 0=flexión máxima
       return angulo
 
     case 'rodilla':
-      // Ángulo interior — coincide en ambos lados
+      // Ángulo interior cadera→rodilla→tobillo — igual en ambos lados
+      // El muñequito y MP usan el mismo sistema: 180=extendida, 0=flexión máxima
       return angulo
 
     case 'cadera':
-      // Muñequito: 90=de pie, 0=horizontal → MediaPipe: 180=de pie, 90=horizontal
-      // Izquierdo: +90 offset
-      // Derecho: el hombro de referencia está al lado contrario → 90 - angulo
+      // Muñequito: 90=de pie, 0=horizontal
+      // MediaPipe: 180=de pie, 90=horizontal  → offset +90
+      // Derecho:   hombro de referencia al lado opuesto → 90 - angulo
       if (esDerecho) {
         return Math.max(0, Math.min(180, 90 - angulo))
       }
       return Math.max(0, Math.min(180, angulo + 90))
 
     case 'tobillo':
-      // Simétrico en ambos lados
-      return Math.max(0, Math.min(180, angulo + 90))
+      // Muñequito y MP coinciden: 90=neutro, >90=dorsiflexión, <90=plantar
+      return angulo
 
     case 'tronco':
     case 'cuello':

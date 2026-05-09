@@ -41,6 +41,7 @@ interface EjercicioEnFase {
   icono: string | null
   id_fase: string
   id_biblioteca_ejercicio: string | null
+  id_ejercicio_catalogo: string | null
   secuencia_poses_personalizada: Pose[] | null
   secuencia_poses_efectiva?: Pose[]
   tiene_ia?: boolean
@@ -174,7 +175,7 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
     const { data: ejercicios } = await supabase
       .from('ejercicio')
       .select(`id_ejercicio, nombre_ejercicio, orden, descripcion, repeticiones, icono, id_fase,
-               id_biblioteca_ejercicio, secuencia_poses_personalizada,
+               id_biblioteca_ejercicio, id_ejercicio_catalogo, secuencia_poses_personalizada,
                biblioteca_ejercicio ( secuencia_poses )`)
       .in('id_fase', fases.map(f => f.id_fase))
       .is('deleted_at', null).order('orden')
@@ -186,14 +187,17 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
         (e.secuencia_poses_personalizada as Pose[] | null) ??
         (bib?.secuencia_poses as Pose[] | null) ?? []
 
+      const esDelCatalogo = !!e.id_ejercicio_catalogo
+
       const ej: EjercicioEnFase = {
         id_ejercicio: e.id_ejercicio, nombre_ejercicio: e.nombre_ejercicio,
         orden: e.orden, descripcion: e.descripcion,
         repeticiones: e.repeticiones, icono: e.icono, id_fase: e.id_fase,
         id_biblioteca_ejercicio: e.id_biblioteca_ejercicio,
+        id_ejercicio_catalogo: e.id_ejercicio_catalogo,
         secuencia_poses_personalizada: e.secuencia_poses_personalizada as Pose[] | null,
         secuencia_poses_efectiva: posesEfectivas,
-        tiene_ia: posesEfectivas.length > 0,
+        tiene_ia: esDelCatalogo || posesEfectivas.length > 0,
       }
       if (!ejPorFase[e.id_fase]) ejPorFase[e.id_fase] = []
       ejPorFase[e.id_fase].push(ej)
@@ -265,7 +269,7 @@ function TabRutinas({ onIrAsignaciones }: { onIrAsignaciones: () => void }) {
                         </div>
                         <div style={{ display: 'flex', gap: '6px' }}>
                           {ej.repeticiones && <Chip label={`${ej.repeticiones} reps`} />}
-                          {ej.tiene_ia && <Chip label={`🤖 ${ej.secuencia_poses_efectiva?.length} poses`} color="green" />}
+                          {ej.tiene_ia && <Chip label={`🤖 ${ej.id_ejercicio_catalogo ? 'Catálogo' : `${ej.secuencia_poses_efectiva?.length} poses`}`} color="green" />}
                           {ej.secuencia_poses_personalizada && <Chip label="✏️ Personalizado" color="yellow" />}
                         </div>
                       </div>
@@ -350,7 +354,6 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
     setMostrarBib(null)
   }
 
-  // Contar total de articulaciones en todas las poses de un ejercicio
   const contarArts = (poses: Pose[]) =>
     poses.reduce((acc, p) => acc + p.articulaciones.length, 0)
 
@@ -375,8 +378,55 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
         if (errF || !faseData) throw new Error(errF?.message)
 
         for (const ej of fase.ejercicios) {
-          let id_biblioteca: string | null = ej.id_biblioteca_ejercicio ?? null
 
+          // ── Modo 1: ejercicio del catálogo predefinido ──────────────────────────
+          if (ej.id_ejercicio_catalogo) {
+            const { error: errE } = await supabase.from('ejercicio').insert({
+              nombre_ejercicio:        ej.nombre_ejercicio || 'Ejercicio',
+              orden:                   ej.orden,
+              descripcion:             ej.descripcion      || null,
+              repeticiones:            parseInt(ej.repeticiones) || null,
+              icono:                   ej.icono,
+              id_fase:                 faseData.id_fase,
+              id_ejercicio_catalogo:   ej.id_ejercicio_catalogo,
+              id_biblioteca_ejercicio: null,
+              secuencia_poses:         null,
+              secuencia_poses_personalizada: null,
+              created_by: user.id, updated_by: user.id,
+            })
+            if (errE) throw new Error(`Ejercicio "${ej.nombre_ejercicio}": ${errE.message}`)
+            continue
+          }
+
+          // ── Modo 2: poses del catálogo (sin ejercicio predefinido) ──────────────
+          if ((ej as any)._modo === 'catalogo_poses' && (ej as any)._poses_catalogo?.length) {
+            const posesSerializadas = (ej as any)._poses_catalogo.map((p: any, i: number) => ({
+              orden:          i + 1,
+              nombre:         p.nombre,
+              hold_sec:       p.hold_sec,
+              id_pose:        p.id_pose,
+              articulaciones: [],
+            }))
+
+            const { error: errE } = await supabase.from('ejercicio').insert({
+              nombre_ejercicio:        ej.nombre_ejercicio || 'Ejercicio',
+              orden:                   ej.orden,
+              descripcion:             ej.descripcion      || null,
+              repeticiones:            parseInt(ej.repeticiones) || null,
+              icono:                   ej.icono,
+              id_fase:                 faseData.id_fase,
+              id_ejercicio_catalogo:   null,
+              id_biblioteca_ejercicio: null,
+              secuencia_poses:         posesSerializadas,
+              secuencia_poses_personalizada: null,
+              created_by: user.id, updated_by: user.id,
+            })
+            if (errE) throw new Error(`Ejercicio "${ej.nombre_ejercicio}": ${errE.message}`)
+            continue
+          }
+
+          // ── Modo 3: personalizado (flujo legacy) ────────────────────────────────
+          let id_biblioteca: string | null = ej.id_biblioteca_ejercicio ?? null
           const posesLimpias = ej.secuencia_poses.map(({ tmpId, ...rest }) => rest)
 
           if (ej.guardar_en_biblioteca && !id_biblioteca) {
@@ -384,32 +434,31 @@ function BuilderRutina({ onDone, onCancelar }: { onDone: () => void; onCancelar:
               .from('biblioteca_ejercicio')
               .insert({
                 nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio',
-                descripcion: ej.descripcion || null,
-                video_muestra: ej.video_muestra || null,
-                icono: ej.icono,
+                descripcion:      ej.descripcion      || null,
+                video_muestra:    ej.video_muestra    || null,
+                icono:            ej.icono,
                 id_fisioterapeuta: user.id,
-                secuencia_poses: posesLimpias,
+                secuencia_poses:  posesLimpias,
               })
               .select('id_biblioteca_ejercicio').single()
             id_biblioteca = bibData?.id_biblioteca_ejercicio ?? null
           }
 
-          const posesPersonalizadas =
-            id_biblioteca && ej.tiene_override ? posesLimpias : null
+          const posesPersonalizadas = id_biblioteca && ej.tiene_override ? posesLimpias : null
 
           const { error: errE } = await supabase.from('ejercicio').insert({
-            nombre_ejercicio: ej.nombre_ejercicio || 'Ejercicio',
-            orden: ej.orden,
-            descripcion: ej.descripcion || null,
-            video_muestra: ej.video_muestra || null,
-            repeticiones: parseInt(ej.repeticiones) || null,
-            icono: ej.icono,
-            id_fase: faseData.id_fase,
-            id_biblioteca_ejercicio: id_biblioteca,
+            nombre_ejercicio:              ej.nombre_ejercicio || 'Ejercicio',
+            orden:                         ej.orden,
+            descripcion:                   ej.descripcion      || null,
+            video_muestra:                 ej.video_muestra    || null,
+            repeticiones:                  parseInt(ej.repeticiones) || null,
+            icono:                         ej.icono,
+            id_fase:                       faseData.id_fase,
+            id_biblioteca_ejercicio:       id_biblioteca,
+            id_ejercicio_catalogo:         null,
             secuencia_poses_personalizada: posesPersonalizadas,
-            secuencia_poses: !id_biblioteca ? posesLimpias : null,  // ✅ reutiliza
-            created_by: user.id,
-            updated_by: user.id,
+            secuencia_poses:               !id_biblioteca ? posesLimpias : null,
+            created_by: user.id, updated_by: user.id,
           })
           if (errE) throw new Error(`Ejercicio "${ej.nombre_ejercicio}": ${errE.message}`)
         }
@@ -584,7 +633,6 @@ function TabBibliotecaEjercicios() {
     setEjercicios(prev => prev.filter(e => e.id_biblioteca_ejercicio !== id))
   }
 
-  // Total de articulaciones en todas las poses
   const contarArts = (poses: Pose[]) =>
     poses.reduce((acc, p) => acc + p.articulaciones.length, 0)
 
@@ -625,7 +673,6 @@ function TabBibliotecaEjercicios() {
                 }
               </div>
 
-              {/* Preview de poses como timeline */}
               {(ej.secuencia_poses?.length ?? 0) > 0 && (
                 <div style={{ display: 'flex', gap: '6px', marginTop: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                   {ej.secuencia_poses.map((pose, i) => (
@@ -651,7 +698,7 @@ function TabBibliotecaEjercicios() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TAB ASIGNACIONES (sin cambios)
+// TAB ASIGNACIONES
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabAsignaciones() {
   const [rutinas, setRutinas]           = useState<{ id_rutina: string; nombre_rutina: string }[]>([])

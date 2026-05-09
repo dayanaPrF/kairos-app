@@ -5,7 +5,7 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-
 import { validatePose } from "../lib/poseUtils"
 import { getHintVoz, getScoreLabel } from "@/app/lib/HintUtils"
 import { MunequitoReferencia } from "./MunequitoReferencia"
-import { useSesion } from "@/hooks/useSesion"                       // ← NUEVO
+import { useSesion } from "@/hooks/useSesion"
 import type { EjercicioCompilado, PoseCompiledStep, ValidationResult } from "../lib/poses/types"
 
 const REPEAT_MESSAGE_COOLDOWN = 3000
@@ -14,7 +14,7 @@ interface Props {
   ejercicio:          EjercicioCompilado
   onBack:             () => void
   onComplete?:        () => void
-  idRutinasPaciente?: string | null                                      // ← NUEVO (se pasa desde la página)
+  idRutinasPaciente?: string | null
 }
 
 export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasPaciente }: Props) {
@@ -32,12 +32,22 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
   const [repActual, setRepActual]                     = useState(1)
   const [status, setStatus]                           = useState<{ result: ValidationResult | null; fps: number }>({ result: null, fps: 0 })
   const [timeLeft, setTimeLeft]                       = useState(ejercicio.pasos[0].hold_sec || 3)
-  const [pasoCompletado, setPasoCompletado]           = useState(false)
   const [ejercicioFinalizado, setEjercicioFinalizado] = useState(false)
   const [isVoiceEnabled, setIsVoiceEnabled]           = useState(true)
   const [isCameraReady, setIsCameraReady]             = useState(false)
   const [transicionando, setTransicionando]           = useState(false)
   const [transicionNombre, setTransicionNombre]       = useState('')
+
+  // ── REFS para el estado crítico del timer ─────────────────────────────────
+  // Usamos refs para los valores que el loop del timer necesita leer sin
+  // depender del ciclo de re-render de React, evitando race conditions.
+  const pasoActualRef         = useRef(0)
+  const repActualRef          = useRef(1)
+  const transicionandoRef     = useRef(false)
+  const ejercicioFinalizadoRef = useRef(false)
+  const pasoCompletadoRef     = useRef(false)
+  const timerRef              = useRef<NodeJS.Timeout | null>(null)
+  const timeLeftRef           = useRef(ejercicio.pasos[0].hold_sec || 3)
 
   const paso: PoseCompiledStep =
     ejercicio.pasos[pasoActual] ?? ejercicio.pasos[ejercicio.pasos.length - 1]
@@ -45,7 +55,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
   const lastSpokenText    = useRef('')
   const lastSpeakTime     = useRef(0)
   const isSpeaking        = useRef(false)
-  const timerRef          = useRef<NodeJS.Timeout | null>(null)
   const lastFrameTime     = useRef(performance.now())
   const frameCount        = useRef(0)
   const lastHintTime      = useRef(0)
@@ -53,17 +62,24 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
   const isVoiceEnabledRef = useRef(isVoiceEnabled)
   useEffect(() => { isVoiceEnabledRef.current = isVoiceEnabled }, [isVoiceEnabled])
 
-  // ← NUEVO: hook de sesión
   const { iniciarSesion, acumularScore, cerrarSesion } = useSesion({ idRutinasPaciente })
 
+  // ── Sincronizar refs con estado ───────────────────────────────────────────
+  useEffect(() => { pasoActualRef.current = pasoActual }, [pasoActual])
+  useEffect(() => { repActualRef.current = repActual }, [repActual])
+  useEffect(() => { transicionandoRef.current = transicionando }, [transicionando])
+  useEffect(() => { ejercicioFinalizadoRef.current = ejercicioFinalizado }, [ejercicioFinalizado])
+
+  // ── Resetear paso cuando cambia pasoActual ────────────────────────────────
   useEffect(() => {
     const nuevoPaso = ejercicio.pasos[pasoActual]
     if (!nuevoPaso) return
-    pasoRef.current = nuevoPaso
+    pasoRef.current        = nuevoPaso
+    pasoCompletadoRef.current = false
+    timeLeftRef.current    = nuevoPaso.hold_sec || 3
     setTimeLeft(nuevoPaso.hold_sec || 3)
-    setPasoCompletado(false)
     setStatus({ result: null, fps: 0 })
-    setTransicionando(false)
+    // NO reseteamos transicionando aquí — lo hace avanzarPaso con setTimeout
   }, [pasoActual, ejercicio.pasos])
 
   const getLatinaVoice = useCallback(() => {
@@ -111,59 +127,118 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
     window.speechSynthesis.speak(u)
   }, [getLatinaVoice])
 
-  const avanzarPaso = useCallback((pasoActualIdx: number, repActualNum: number) => {
-    const esUltimoPaso = pasoActualIdx + 1 >= totalPasos
-    const esUltimaRep  = repActualNum >= totalRepeticiones
+  // ── avanzarPaso — lee desde refs, no desde estado ─────────────────────────
+  const avanzarPaso = useCallback(() => {
+    const pasoIdx = pasoActualRef.current
+    const repNum  = repActualRef.current
+
+    const esUltimoPaso = pasoIdx + 1 >= totalPasos
+    const esUltimaRep  = repNum >= totalRepeticiones
 
     if (!esUltimoPaso) {
-      const siguientePaso = ejercicio.pasos[pasoActualIdx + 1]
+      // Hay más poses en esta repetición
+      const siguientePaso = ejercicio.pasos[pasoIdx + 1]
       speak(`Siguiente pose: ${siguientePaso.nombre}`, true)
       setTransicionando(true)
+      transicionandoRef.current = true
       setTransicionNombre(siguientePaso.nombre)
-      setTimeout(() => { setPasoActual(pasoActualIdx + 1) }, 1200)
+      setTimeout(() => {
+        setPasoActual(pasoIdx + 1)
+        pasoActualRef.current = pasoIdx + 1
+        setTransicionando(false)
+        transicionandoRef.current = false
+      }, 1200)
+
     } else if (!esUltimaRep) {
-      const sigRep = repActualNum + 1
+      // Hay más repeticiones
+      const sigRep = repNum + 1
       speak(`Repetición ${sigRep} de ${totalRepeticiones}`, true)
       setTransicionando(true)
+      transicionandoRef.current = true
       setTransicionNombre(`Repetición ${sigRep} · ${ejercicio.pasos[0].nombre}`)
       setTimeout(() => {
         setRepActual(sigRep)
+        repActualRef.current = sigRep
         setPasoActual(0)
-        setPasoCompletado(false)
+        pasoActualRef.current = 0
+        pasoCompletadoRef.current = false
+        timeLeftRef.current = ejercicio.pasos[0].hold_sec || 3
         setTimeLeft(ejercicio.pasos[0].hold_sec || 3)
+        setTransicionando(false)
+        transicionandoRef.current = false
       }, 1500)
+
     } else {
+      // Ejercicio completo
+      ejercicioFinalizadoRef.current = true
       setEjercicioFinalizado(true)
       speak('¡Ejercicio completado! Excelente trabajo.', true)
-      cerrarSesion(true)                                                // ← NUEVO
+      cerrarSesion(true)
       setTimeout(() => onComplete?.(), 0)
     }
   }, [totalPasos, totalRepeticiones, ejercicio.pasos, speak, onComplete, cerrarSesion])
 
-  useEffect(() => {
-    if (!paso || pasoCompletado || ejercicioFinalizado || transicionando) return
-    const isPoseValid = status.result?.isValid
-    const hasPerson   = !!status.result
+  // ── Lógica del timer — controlada por refs para evitar race conditions ────
+  // Se ejecuta cuando cambia la validez de la pose actual.
+  // NO depende de pasoActual/repActual/transicionando como estado —
+  // los lee desde refs para evitar que el efecto se re-ejecute en cada render.
+  const isValid   = status.result?.isValid
+  const hasPerson = !!status.result
 
-    if (hasPerson && isPoseValid) {
-      if (timeLeft === (paso.hold_sec || 3)) speak(`${paso.nombre}, mantén`, true)
-      timerRef.current = setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current!)
-            setPasoCompletado(true)
-            avanzarPaso(pasoActual, repActual)
-            return 0
-          }
-          if (prev <= 4) speak(String(prev - 1), true)
-          return prev - 1
-        })
-      }, 1000)
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current)
+  useEffect(() => {
+    // Limpiar timer anterior siempre
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [status.result?.isValid, !!status.result, pasoCompletado, ejercicioFinalizado, transicionando])
+
+    // No arrancar timer si estamos bloqueados
+    if (
+      pasoCompletadoRef.current ||
+      ejercicioFinalizadoRef.current ||
+      transicionandoRef.current ||
+      !hasPerson ||
+      !isValid
+    ) return
+
+    // Pose válida — arrancar countdown
+    const pasoActivo = pasoRef.current
+    speak(`${pasoActivo.nombre}, mantén`, true)
+
+    timerRef.current = setInterval(() => {
+      // Re-verificar estado desde refs en cada tick
+      if (
+        pasoCompletadoRef.current ||
+        ejercicioFinalizadoRef.current ||
+        transicionandoRef.current
+      ) {
+        clearInterval(timerRef.current!)
+        timerRef.current = null
+        return
+      }
+
+      timeLeftRef.current = timeLeftRef.current - 1
+      setTimeLeft(timeLeftRef.current)
+
+      if (timeLeftRef.current <= 4 && timeLeftRef.current > 0) {
+        speak(String(timeLeftRef.current), true)
+      }
+
+      if (timeLeftRef.current <= 0) {
+        clearInterval(timerRef.current!)
+        timerRef.current = null
+        pasoCompletadoRef.current = true
+        avanzarPaso()
+      }
+    }, 1000)
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [isValid, hasPerson]) // ← SOLO estas dos dependencias — el resto va por refs
 
   const cleanup = useCallback(() => {
     if (streamRef.current) {
@@ -214,7 +289,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             videoRef.current?.play()
             setIsCameraReady(true)
             yaInicioRef.current = true
-            iniciarSesion()                                              // ← NUEVO: arrancar sesión cuando la cámara está lista
+            iniciarSesion()
             loop()
           }
         }
@@ -234,27 +309,64 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
           canvas.width  = video.videoWidth
           canvas.height = video.videoHeight
         }
+
+        // ── Canvas visible (espejado) ──────────────────────────────────────
+        // El video frontal ya viene espejado — solo dibujamos tal cual
+        // para que el usuario se vea como en espejo.
         ctx.save()
         ctx.translate(canvas.width, 0)
         ctx.scale(-1, 1)
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         ctx.restore()
 
+        // Detectar sobre el video directamente.
+        // La cámara frontal entrega el stream ya espejado, por lo que
+        // los landmarks de MediaPipe también salen espejados:
+        // el hombro derecho anatómico aparece en x < 0.5 (lado izquierdo).
+        // Para validar correctamente necesitamos:
+        //   1. Espejear x → coordenadas anatómicas reales
+        //   2. Intercambiar índices izq ↔ der → etiquetas correctas
         const result = landmarkerRef.current.detectForVideo(video, performance.now())
         if (result.landmarks?.length > 0) {
-          const drawingUtils = new DrawingUtils(ctx)
-          const mirrored     = result.landmarks[0].map(lm => ({
+          const raw = result.landmarks[0]
+
+          // Para dibujar: espejear x para que el usuario se vea como en espejo
+          const mirrored = raw.map(lm => ({
             x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
           }))
-          const validation = validatePose(mirrored, pasoRef.current)
+
+          // Para validar: espejear x + intercambiar índices izq↔der
+          // Así landmark[12] (hombro der) corresponde realmente al lado derecho
+          const unmirrored = raw.map(lm => ({
+            x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
+          }))
+          // Intercambiar pares izquierdo ↔ derecho
+          const SWAP: [number, number][] = [
+            [11,12],[13,14],[15,16],[17,18],[19,20],[21,22],
+            [23,24],[25,26],[27,28],[29,30],[31,32],
+            [1,4],[2,5],[3,6],[7,8],[9,10],
+          ]
+          const forValidation = [...unmirrored]
+          for (const [a, b] of SWAP) {
+            if (forValidation[a] && forValidation[b]) {
+              const tmp = forValidation[a]
+              forValidation[a] = forValidation[b]
+              forValidation[b] = tmp
+            }
+          }
+
+          // Validar con landmarks anatomicamente correctos
+          const validation = validatePose(forValidation, pasoRef.current)
           const color      = validation.isValid ? '#00d26e' : '#dc3c3c'
+
+          const drawingUtils = new DrawingUtils(ctx)
           drawingUtils.drawConnectors(mirrored, PoseLandmarker.POSE_CONNECTIONS, { color, lineWidth: 5 })
 
           if (!validation.isValid) {
             speakHintFromLoop(validation.keypointResults)
           }
 
-          acumularScore(validation.score)                                // ← NUEVO: acumular score en cada frame
+          acumularScore(validation.score)
 
           frameCount.current++
           const now = performance.now()
@@ -277,12 +389,29 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
     return () => {
       running = false
       cancelAnimationFrame(rafId)
-      cerrarSesion(false)                                                // ← NUEVO: sesión parcial si sale sin completar
+      cerrarSesion(false)
       cleanup()
     }
   }, [ejercicio])
 
   const { result, fps } = status
+
+  const reiniciar = useCallback(() => {
+    pasoActualRef.current         = 0
+    repActualRef.current          = 1
+    pasoCompletadoRef.current     = false
+    transicionandoRef.current     = false
+    ejercicioFinalizadoRef.current = false
+    timeLeftRef.current           = ejercicio.pasos[0].hold_sec || 3
+    pasoRef.current               = ejercicio.pasos[0]
+    setPasoActual(0)
+    setRepActual(1)
+    setEjercicioFinalizado(false)
+    setTransicionando(false)
+    setTimeLeft(ejercicio.pasos[0].hold_sec || 3)
+    setStatus({ result: null, fps: 0 })
+    iniciarSesion()
+  }, [ejercicio, iniciarSesion])
 
   return (
     <div style={{
@@ -298,7 +427,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
         padding: '10px 20px', gap: '12px', flexShrink: 0,
       }}>
         <button
-          onClick={() => { cerrarSesion(false); cleanup(); onBack() }}   // ← NUEVO: cerrar sesión al volver
+          onClick={() => { cerrarSesion(false); cleanup(); onBack() }}
           style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 10, padding: '8px 16px', color: '#bbb', cursor: 'pointer' }}
         >
           ← VOLVER
@@ -425,6 +554,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             }}
           />
 
+          {/* Overlay de transición entre poses */}
           {transicionando && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 20,
@@ -454,6 +584,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             </div>
           )}
 
+          {/* Chips de articulaciones */}
           {result && !ejercicioFinalizado && !transicionando && (
             <div style={{ position: 'absolute', top: 16, left: 16, display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {result.isValid ? (
@@ -490,6 +621,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             </div>
           )}
 
+          {/* Puntos de repetición */}
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: '6px' }}>
             {Array.from({ length: totalRepeticiones }).map((_, i) => (
               <div key={i} style={{
@@ -500,6 +632,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             ))}
           </div>
 
+          {/* Pantalla de ejercicio finalizado */}
           {ejercicioFinalizado && (
             <div style={{
               position: 'absolute', inset: 0,
@@ -512,12 +645,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
                 {totalRepeticiones} repetición{totalRepeticiones !== 1 ? 'es' : ''} completada{totalRepeticiones !== 1 ? 's' : ''}
               </p>
               <button
-                onClick={() => {
-                  setPasoActual(0); setRepActual(1); setEjercicioFinalizado(false)
-                  setPasoCompletado(false); setTimeLeft(ejercicio.pasos[0].hold_sec || 3)
-                  setStatus({ result: null, fps: 0 }); setTransicionando(false)
-                  iniciarSesion()                                        // ← NUEVO: nueva sesión al repetir
-                }}
+                onClick={reiniciar}
                 style={{
                   padding: '16px 52px', borderRadius: 40,
                   background: '#00d26e', color: '#000',

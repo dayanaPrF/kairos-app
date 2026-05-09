@@ -1,261 +1,522 @@
-// Extraído de EjercicioBuilder.tsx para ser reutilizado en el detector del paciente
+'use client'
+
+import { useRef, useEffect, useCallback, useMemo } from 'react'
 
 export interface PoseArticulacionSimple {
+  id_articulacion?: string
   nombre_articulacion: string
   angulo: number
   tolerancia: number
 }
 
-function Dot({ cx, cy, r, fill, stroke }: { cx: number; cy: number; r: number; fill: string; stroke: string }) {
-  return <circle cx={cx} cy={cy} r={r} fill={fill} stroke={stroke} strokeWidth="1.5"/>
-}
-
 interface Props {
   articulaciones: PoseArticulacionSimple[]
-  size?: number  // escala, default 1
+  onAnguloChange?: (nombre_articulacion: string, nuevoAngulo: number) => void
+  size?: number
   mostrarLeyenda?: boolean
 }
 
-export function MunequitoReferencia({ articulaciones, size = 1, mostrarLeyenda = true }: Props) {
-  
-  // --- TRUCO DE INVERSIÓN LÓGICA ---
-  // Intercambiamos los nombres de las articulaciones antes de procesarlas.
-  // Esto hace que lo que la base de datos dice que es "Derecho", el muñequito lo pinte 
-  // en su lado "Izquierdo" lógico, que al aplicar el espejo visual scale(-1,1),
-  // volverá a quedar en la derecha frente al usuario.
-  const articulacionesProcesadas = articulaciones.map(art => {
-    const nombre = art.nombre_articulacion.toLowerCase();
-    let nuevoNombre = nombre;
+// ─── Colores ──────────────────────────────────────────────────────────────────
+const BLUE = '#378ADD'
+const DARK = '#185FA5'
+const GRAY = '#888780'
+const SKIN = '#D8D6CC'
+const WHITE = '#ffffff'
+const ARC  = 'rgba(55,138,221,0.22)'
 
-    if (nombre.includes('derecha')) {
-      nuevoNombre = nombre.replace('derecha', 'izquierda');
-    } else if (nombre.includes('derecho')) {
-      nuevoNombre = nombre.replace('derecho', 'izquierdo');
-    } else if (nombre.includes(' der ') || nombre.endsWith(' der')) {
-      nuevoNombre = nombre.replace(' der', ' izq');
-    } else if (nombre.includes('izquierda')) {
-      nuevoNombre = nombre.replace('izquierda', 'derecha');
-    } else if (nombre.includes('izquierdo')) {
-      nuevoNombre = nombre.replace('izquierdo', 'derecho');
-    } else if (nombre.includes(' izq ') || nombre.endsWith(' izq')) {
-      nuevoNombre = nombre.replace(' izq', ' der');
+// ─── Definición de articulaciones ─────────────────────────────────────────────
+// [A, B_vértice, C] — idéntico a ai_articulacion_config
+// draggable = índice MediaPipe del punto que el usuario arrastra
+//
+// REGLA: el punto arrastrable es siempre el que más cambia visualmente
+// cuando se modifica esa articulación:
+//   Hombro    → mover la muñeca cambia el ángulo hombro [muñeca→hombro→cadera]
+//   Codo      → mover la muñeca también afecta al codo [hombro→codo→muñeca]
+//   Cadera    → mover la rodilla cambia el ángulo cadera [hombro→cadera→rodilla]
+//   Rodilla   → mover el tobillo cambia el ángulo rodilla [cadera→rodilla→tobillo]
+//   Tobillo   → mover el pie cambia el ángulo tobillo [rodilla→tobillo→pie]
+// ─────────────────────────────────────────────────────────────────────────────
+const JOINT_DEFS: Record<string, { A: number; B: number; C: number; draggable: number }> = {
+  'hombro izquierdo':  { A: 15, B: 11, C: 23, draggable: 15 },
+  'hombro derecho':    { A: 16, B: 12, C: 24, draggable: 16 },
+  'codo izquierdo':    { A: 11, B: 13, C: 15, draggable: 15 },
+  'codo derecho':      { A: 12, B: 14, C: 16, draggable: 16 },
+  'cadera izquierda':  { A: 11, B: 23, C: 25, draggable: 25 },
+  'cadera derecha':    { A: 12, B: 24, C: 26, draggable: 26 },
+  'tronco izquierdo':  { A: 11, B: 23, C: 25, draggable: 25 },
+  'tronco derecho':    { A: 12, B: 24, C: 26, draggable: 26 },
+  'rodilla izquierda': { A: 23, B: 25, C: 27, draggable: 27 },
+  'rodilla derecha':   { A: 24, B: 26, C: 28, draggable: 28 },
+  'tobillo izquierdo': { A: 25, B: 27, C: 31, draggable: 31 },
+  'tobillo derecho':   { A: 26, B: 28, C: 32, draggable: 32 },
+  'cuello':            { A: 11, B: 0,  C: 12, draggable: 0  },
+}
+
+// ─── Ángulo entre 3 puntos ────────────────────────────────────────────────────
+function angleBetween(
+  A: { x: number; y: number },
+  B: { x: number; y: number },
+  C: { x: number; y: number }
+): number {
+  const v1x = A.x - B.x, v1y = A.y - B.y
+  const v2x = C.x - B.x, v2y = C.y - B.y
+  const dot = v1x * v2x + v1y * v2y
+  const m1 = Math.sqrt(v1x ** 2 + v1y ** 2)
+  const m2 = Math.sqrt(v2x ** 2 + v2y ** 2)
+  if (m1 < 1e-6 || m2 < 1e-6) return 0
+  return Math.round(Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2)))) * 180 / Math.PI)
+}
+
+// ─── Pose base calibrada para T-pose real ─────────────────────────────────────
+//
+// Estos valores reflejan lo que MediaPipe REALMENTE mide en una T-pose frontal:
+//
+//   Hombro ~90°:
+//     muñeca(15) está horizontal respecto a hombro(11), y cadera(23) está abajo.
+//     El ángulo [muñeca→hombro→cadera] ≈ 90°.
+//
+//   Codo ~140°:  ← NO 180°. En T-pose frontal, los brazos no quedan perfectamente
+//     rectos vistos de frente. MediaPipe mide el ángulo 3D proyectado y el
+//     húmero vs antebrazo dan ~130-150° en persona real. Usamos 140° como base.
+//
+//   Cadera ~170°: hombro(11), cadera(23) y rodilla(25) casi en línea vertical.
+//   Rodilla ~170°: cadera(23), rodilla(25) y tobillo(27) casi en línea vertical.
+//   Tobillo ~90°: rodilla(25), tobillo(27) y pie(31) forman ~90° neutro.
+//
+// viewBox: 200 × 310
+// ─────────────────────────────────────────────────────────────────────────────
+function getBaseLandmarks(W: number, S: number): Record<number, { x: number; y: number }> {
+  const cx = W / 2
+  return {
+    0:  { x: cx,        y: 18  * S },  // nariz
+    11: { x: cx - 28,   y: 62  * S },  // hombro izq  (paciente)
+    12: { x: cx + 28,   y: 62  * S },  // hombro der  (paciente)
+    13: { x: cx - 60,   y: 68  * S },  // codo izq    — ligeramente bajo para dar ~140° en T-pose
+    14: { x: cx + 60,   y: 68  * S },  // codo der
+    15: { x: cx - 95,   y: 74  * S },  // muñeca izq  — horizontal con hombro
+    16: { x: cx + 95,   y: 74  * S },  // muñeca der
+    23: { x: cx - 18,   y: 145 * S },  // cadera izq
+    24: { x: cx + 18,   y: 145 * S },  // cadera der
+    25: { x: cx - 20,   y: 218 * S },  // rodilla izq
+    26: { x: cx + 20,   y: 218 * S },  // rodilla der
+    27: { x: cx - 18,   y: 284 * S },  // tobillo izq
+    28: { x: cx + 18,   y: 284 * S },  // tobillo der
+    31: { x: cx - 30,   y: 300 * S },  // pie izq
+    32: { x: cx + 30,   y: 300 * S },  // pie der
+  }
+}
+
+// ─── Componente ───────────────────────────────────────────────────────────────
+export function MunequitoReferencia({
+  articulaciones,
+  onAnguloChange,
+  size = 1,
+  mostrarLeyenda = true,
+}: Props) {
+  const canvasRef         = useRef<HTMLCanvasElement>(null)
+  const draggingRef       = useRef<number | null>(null)
+  const lmRef             = useRef<Record<number, { x: number; y: number }>>({})
+  const articulacionesRef = useRef(articulaciones)
+  articulacionesRef.current = articulaciones
+
+  const W = Math.round(200 * size)
+  const H = Math.round(310 * size)
+  const S = size
+
+  // Longitudes de hueso calculadas UNA vez desde la pose base
+  const boneLengths = useMemo(() => {
+    const base = getBaseLandmarks(W, S)
+    const lengths: Record<number, number> = {}
+    const pairs: [number, number][] = [
+      [11, 13], [13, 15], [12, 14], [14, 16],
+      [23, 25], [25, 27], [24, 26], [26, 28],
+      [27, 31], [28, 32],
+    ]
+    for (const [p, c] of pairs) {
+      lengths[c] = Math.hypot(base[c].x - base[p].x, base[c].y - base[p].y)
+    }
+    return lengths
+  }, [W, S])
+
+  // ── Inicializar landmarks desde ángulos guardados ─────────────────────────
+  //
+  // Para cada articulación activa, calcula dónde debe quedar el punto
+  // draggable para que angleBetween(A,B,C) == art.angulo.
+  //
+  // Estrategia:
+  //   1. El punto B (vértice) es fijo en la base.
+  //   2. El punto A es fijo en la base.
+  //   3. Queremos colocar el punto draggable (C o A según la articulación)
+  //      tal que el ángulo en B sea el deseado.
+  //
+  //   Dirección de referencia: vector B→A (en la pose base).
+  //   Rotamos ese vector para que forme `angulo` grados con el otro brazo.
+  //
+  //   Como angleBetween es simétrico, necesitamos saber en qué "lado" rotar.
+  //   Usamos el signo del cross product para mantener coherencia visual.
+  // ─────────────────────────────────────────────────────────────────────────
+  const initLandmarks = useCallback(() => {
+    const lm = getBaseLandmarks(W, S)
+
+    for (const art of articulacionesRef.current) {
+      const key  = art.nombre_articulacion.toLowerCase().trim()
+      const jdef = JOINT_DEFS[key]
+      if (!jdef) continue
+
+      const B = lm[jdef.B]
+      const A = lm[jdef.A]
+      const C = lm[jdef.C]
+      if (!B || !A || !C) continue
+
+      // Vector B→A (dirección de referencia)
+      const bax = A.x - B.x, bay = A.y - B.y
+      const baLen = Math.sqrt(bax * bax + bay * bay) || 1
+
+      // Ángulo actual de B→A
+      const refAngle = Math.atan2(bay, bax)
+
+      // Queremos que el ángulo entre BA y BC sea `art.angulo` grados.
+      // Entonces BC debe estar a ±art.angulo desde BA.
+      // Elegimos la rotación que coloca C en la posición anatómicamente correcta.
+      // Para brazos: rotar en sentido negativo (hacia abajo) desde la horizontal.
+      // Para piernas: rotar en sentido positivo (hacia abajo) desde la vertical.
+      const targetRad = (art.angulo * Math.PI) / 180
+
+      // Determinar el sentido de rotación según el tipo de articulación
+      const isRight   = key.includes('derecho') || key.includes('der')
+      let rotDir = 1  // sentido antihorario por defecto
+
+      if (key.includes('hombro') || key.includes('codo')) {
+        // Brazos: el punto C (muñeca) debe quedar hacia afuera-abajo
+        rotDir = isRight ? -1 : 1
+      } else if (key.includes('cadera') || key.includes('tronco') || key.includes('rodilla') || key.includes('tobillo')) {
+        // Piernas: el punto C (rodilla/tobillo/pie) debe quedar hacia abajo
+        rotDir = isRight ? 1 : -1
+      }
+
+      const newAngle = refAngle + rotDir * (Math.PI - targetRad)
+      const lenBC = boneLengths[jdef.draggable] ??
+                    Math.hypot(C.x - B.x, C.y - B.y)
+
+      lm[jdef.draggable] = {
+        x: Math.max(2, Math.min(W - 2, B.x + lenBC * Math.cos(newAngle))),
+        y: Math.max(2, Math.min(H - 2, B.y + lenBC * Math.sin(newAngle))),
+      }
+
+      // ── IMPORTANTE: NO propagamos a hijos ────────────────────────────────
+      // Cada punto es independiente. El fisio mueve la muñeca para hombro,
+      // y mueve el codo por separado para el codo. Sin cadena automática.
     }
 
-    return { ...art, nombre_articulacion: nuevoNombre };
-  });
+    lmRef.current = lm
+  }, [W, H, S, boneLengths])
 
-  const get = (keyword: string) =>
-    articulacionesProcesadas.find(a => a.nombre_articulacion.toLowerCase().includes(keyword))
+  // ── Límites de arrastre ───────────────────────────────────────────────────
+  // Amplios y permisivos — el fisio tiene libertad total de movimiento
+  const getBounds = useCallback((idx: number) => {
+    const cx = W / 2
+    // Cada punto puede moverse libremente en su mitad del cuerpo (izq/der)
+    // con márgenes mínimos para no salir del canvas
+    const map: Record<number, { xMin: number; xMax: number; yMin: number; yMax: number }> = {
+      13: { xMin: 2,      xMax: cx - 2,  yMin: 10 * S, yMax: H - 10 },  // codo izq
+      14: { xMin: cx + 2, xMax: W - 2,   yMin: 10 * S, yMax: H - 10 },  // codo der
+      15: { xMin: 2,      xMax: cx - 2,  yMin: 5  * S, yMax: H - 5  },  // muñeca izq
+      16: { xMin: cx + 2, xMax: W - 2,   yMin: 5  * S, yMax: H - 5  },  // muñeca der
+      25: { xMin: 2,      xMax: W - 2,   yMin: 80 * S, yMax: H - 20 },  // rodilla izq — libre
+      26: { xMin: 2,      xMax: W - 2,   yMin: 80 * S, yMax: H - 20 },  // rodilla der
+      27: { xMin: 2,      xMax: W - 2,   yMin: 100 * S, yMax: H - 5  }, // tobillo izq
+      28: { xMin: 2,      xMax: W - 2,   yMin: 100 * S, yMax: H - 5  }, // tobillo der
+      31: { xMin: 2,      xMax: W - 2,   yMin: 120 * S, yMax: H - 2  }, // pie izq
+      32: { xMin: 2,      xMax: W - 2,   yMin: 120 * S, yMax: H - 2  }, // pie der
+    }
+    return map[idx] ?? { xMin: 2, xMax: W - 2, yMin: 2, yMax: H - 2 }
+  }, [W, H, S])
 
-  // ... Resto del procesamiento idéntico ...
-  const codoDer    = get('codo derecho')    ?? get('codo der')
-  const codoIzq    = get('codo izquierdo')  ?? get('codo izq')
-  const hombroDer  = get('hombro derecho')  ?? get('hombro der')
-  const hombroIzq  = get('hombro izquierdo') ?? get('hombro izq')
-  const caderaDer  = get('cadera derecha')  ?? get('cadera der')
-  const caderaIzq  = get('cadera izquierda') ?? get('cadera izq')
-  const rodillaDer = get('rodilla derecha') ?? get('rodilla der')
-  const rodillaIzq = get('rodilla izquierda') ?? get('rodilla izq')
-  const tobilloDer = get('tobillo derecho') ?? get('tobillo der')
-  const tobilloIzq = get('tobillo izquierdo') ?? get('tobillo izq')
-  const tronco     = get('tronco')
-  const cuello     = get('cuello')
+  // ── Notificar cambios al padre ────────────────────────────────────────────
+  // Solo notifica las articulaciones que usan este punto draggable
+  const notifyChanges = useCallback((dragIdx: number) => {
+    if (!onAnguloChange) return
+    const lm = lmRef.current
+    for (const [jointName, jdef] of Object.entries(JOINT_DEFS)) {
+      if (jdef.draggable !== dragIdx) continue
+      if (!lm[jdef.A] || !lm[jdef.B] || !lm[jdef.C]) continue
+      const newAngle = angleBetween(lm[jdef.A], lm[jdef.B], lm[jdef.C])
+      const match = articulacionesRef.current.find(
+        a => a.nombre_articulacion.toLowerCase().trim() === jointName
+      )
+      if (match) onAnguloChange(match.nombre_articulacion, newAngle)
+    }
+  }, [onAnguloChange])
 
-  const ACTIVE = '#378ADD'; const RED = '#E24B4A'; const DARK = '#185FA5';
-  const GRAY = '#b0aea6'; const SKIN = '#D8D6CC'; const W = 3.5; const WG = 2;
+  // ── Dibujo ────────────────────────────────────────────────────────────────
+  const draw = useCallback((activeIdx: number | null) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')!
+    const lm  = lmRef.current
+    ctx.clearRect(0, 0, W, H)
 
-  const CX = 90; const HCX = CX, HCY = 22;
-  const NECK = { x: CX, y: 36 }; const SHR = { x: CX + 26, y: 50 }; const SHL = { x: CX - 26, y: 50 };
-  const HIP = { x: CX, y: 112 }; const HIPR = { x: CX + 16, y: 115 }; const HIPL = { x: CX - 16, y: 115 };
+    const seg = (a: number, b: number, color: string, w: number) => {
+      if (!lm[a] || !lm[b]) return
+      ctx.beginPath(); ctx.moveTo(lm[a].x, lm[a].y); ctx.lineTo(lm[b].x, lm[b].y)
+      ctx.strokeStyle = color; ctx.lineWidth = w * S; ctx.lineCap = 'round'; ctx.stroke()
+    }
 
-  const d2r = (d: number) => d * Math.PI / 180;
+    const dot = (p: { x: number; y: number }, r: number, fill: string, stroke: string, sw = 1.5) => {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * S, 0, Math.PI * 2)
+      ctx.fillStyle = fill; ctx.fill()
+      ctx.strokeStyle = stroke; ctx.lineWidth = sw * S; ctx.stroke()
+    }
 
-  const elbowDerPos = { x: SHR.x + 24, y: SHR.y + 44 };
-  const wristDer = codoDer
-    ? { x: elbowDerPos.x + 40 * Math.sin(d2r(codoDer.angulo)) * 0.6, y: elbowDerPos.y + 40 * Math.cos(d2r(180 - codoDer.angulo)) }
-    : { x: elbowDerPos.x + 10, y: elbowDerPos.y + 34 };
+    const activas = new Set(articulacionesRef.current.map(a => a.nombre_articulacion.toLowerCase()))
 
-  const elbowIzqPos = { x: SHL.x - 24, y: SHL.y + 44 };
-  const wristIzq = codoIzq
-    ? { x: elbowIzqPos.x - 40 * Math.sin(d2r(codoIzq.angulo)) * 0.6, y: elbowIzqPos.y + 40 * Math.cos(d2r(180 - codoIzq.angulo)) }
-    : { x: elbowIzqPos.x - 10, y: elbowIzqPos.y + 34 };
+    const armL = (activas.has('hombro izquierdo') || activas.has('codo izquierdo'))     ? BLUE : GRAY
+    const armR = (activas.has('hombro derecho')   || activas.has('codo derecho'))       ? BLUE : GRAY
+    const legL = (activas.has('cadera izquierda') || activas.has('rodilla izquierda') || activas.has('tronco izquierdo')) ? BLUE : GRAY
+    const legR = (activas.has('cadera derecha')   || activas.has('rodilla derecha')   || activas.has('tronco derecho'))   ? BLUE : GRAY
+    const ankL = activas.has('tobillo izquierdo') ? BLUE : GRAY
+    const ankR = activas.has('tobillo derecho')   ? BLUE : GRAY
 
-  const armAngleDer = hombroDer ? (hombroDer.angulo) - 90 : -80;
-  const elbowHombroDer = { x: SHR.x + 42 * Math.cos(d2r(armAngleDer)), y: SHR.y - 42 * Math.sin(d2r(armAngleDer)) };
-  const wristHombroDer = { x: elbowHombroDer.x + 32 * Math.cos(d2r(armAngleDer)), y: elbowHombroDer.y - 32 * Math.sin(d2r(armAngleDer)) };
+    if (!lm[11] || !lm[12] || !lm[23] || !lm[24]) return
+    const neck = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 - 10 * S }
+    const hipC = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 }
 
-  const armAngleIzq = hombroIzq ? (hombroIzq.angulo) - 90 : 80;
-  const elbowHombroIzq = { x: SHL.x - 42 * Math.cos(d2r(armAngleIzq)), y: SHL.y - 42 * Math.sin(d2r(armAngleIzq)) };
-  const wristHombroIzq = { x: elbowHombroIzq.x - 32 * Math.cos(d2r(armAngleIzq)), y: elbowHombroIzq.y - 32 * Math.sin(d2r(armAngleIzq)) };
+    // Torso
+    ctx.beginPath(); ctx.moveTo(neck.x, neck.y); ctx.lineTo(hipC.x, hipC.y)
+    ctx.strokeStyle = GRAY; ctx.lineWidth = 3 * S; ctx.lineCap = 'round'; ctx.stroke()
+    seg(11, 12, GRAY, 2.5); seg(23, 24, GRAY, 2.5)
 
-  const calcRodilla = (hip: typeof HIPR, lado: 1 | -1, rodilla?: PoseArticulacionSimple) => {
-    const knee = { x: hip.x + lado * 5, y: hip.y + 46 };
-    const ang = rodilla ? (180 - rodilla.angulo) : 0;
-    const ankle = {
-      x: knee.x - lado * 46 * Math.sin(d2r(ang)) * 0.7,
-      y: knee.y + 46 * Math.cos(d2r(ang)) * (rodilla && rodilla.angulo < 90 ? 0.7 : 1),
-    };
-    return { knee, ankle };
-  };
+    // Brazos (11→13→15 izq, 12→14→16 der)
+    seg(11, 13, armL, 3.5); seg(13, 15, armL, 3)
+    seg(12, 14, armR, 3.5); seg(14, 16, armR, 3)
 
-  const { knee: kneeDer, ankle: ankleDer } = calcRodilla(HIPR, 1, rodillaDer);
-  const { knee: kneeIzq, ankle: ankleIzq } = calcRodilla(HIPL, -1, rodillaIzq);
+    // Piernas (23→25→27→31 izq, 24→26→28→32 der)
+    seg(23, 25, legL, 3.5); seg(25, 27, legL, 3); seg(27, 31, ankL, 2.5)
+    seg(24, 26, legR, 3.5); seg(26, 28, legR, 3); seg(28, 32, ankR, 2.5)
 
-  const calcCadera = (hip: typeof HIPR, lado: 1 | -1, cadera?: PoseArticulacionSimple) => {
-    const ang = cadera ? cadera.angulo - 180 : -85;
-    const thigh = {
-      x: hip.x + 46 * Math.sin(d2r(ang)) * lado * 0.4,
-      y: hip.y + 46 * Math.cos(d2r(ang - 10)) * (cadera && cadera.angulo > 90 ? 1 : -0.5),
-    };
-    return { thigh, shin: { x: thigh.x + lado * 3, y: thigh.y + 40 } };
-  };
+    // Cabeza
+    ctx.beginPath(); ctx.arc(neck.x, neck.y - 14 * S, 13 * S, 0, Math.PI * 2)
+    ctx.strokeStyle = GRAY; ctx.lineWidth = 2 * S; ctx.fillStyle = 'transparent'
+    ctx.fill(); ctx.stroke()
 
-  const { thigh: thighDerC, shin: shinDerC } = calcCadera(HIPR, 1, caderaDer);
-  const { thigh: thighIzqC, shin: shinIzqC } = calcCadera(HIPL, -1, caderaIzq);
+    // Arcos de ángulo en articulaciones activas
+    for (const art of articulacionesRef.current) {
+      const key  = art.nombre_articulacion.toLowerCase().trim()
+      const jdef = JOINT_DEFS[key]
+      if (!jdef || !lm[jdef.A] || !lm[jdef.B] || !lm[jdef.C]) continue
+      const B = lm[jdef.B], A = lm[jdef.A], C = lm[jdef.C]
+      const a1 = Math.atan2(A.y - B.y, A.x - B.x)
+      const a2 = Math.atan2(C.y - B.y, C.x - B.x)
+      ctx.beginPath(); ctx.arc(B.x, B.y, 12 * S, a1, a2)
+      ctx.strokeStyle = ARC; ctx.lineWidth = 2.5 * S; ctx.stroke()
+      const mid = (a1 + a2) / 2
+      ctx.fillStyle = BLUE; ctx.font = `bold ${Math.round(9 * S)}px sans-serif`; ctx.textAlign = 'center'
+      ctx.fillText(`${art.angulo}°`, B.x + 22 * S * Math.cos(mid), B.y + 22 * S * Math.sin(mid))
+    }
 
-  const calcTobillo = (knee: { x: number; y: number }, lado: 1 | -1, tobillo?: PoseArticulacionSimple) => {
-    const ankle = { x: knee.x + lado * 2, y: knee.y + 46 };
-    const footA = tobillo ? tobillo.angulo - 90 : 0;
-    return { ankle, toe: { x: ankle.x + 28 * Math.cos(d2r(footA)) * lado, y: ankle.y + 28 * Math.sin(d2r(footA)) * 0.4 } };
-  };
+    // Puntos fijos (hombros, caderas)
+    for (const idx of [11, 12, 23, 24]) {
+      if (lm[idx]) dot(lm[idx], 5, SKIN, BLUE, 1.5)
+    }
 
-  const { ankle: ankleDerT, toe: toeDer } = calcTobillo(kneeDer, 1, tobilloDer);
-  const { ankle: ankleIzqT, toe: toeIzq } = calcTobillo(kneeIzq, -1, tobilloIzq);
+    // Puntos arrastrables (codos, muñecas, rodillas, tobillos)
+    if (onAnguloChange) {
+      for (const idx of [13, 14, 15, 16, 25, 26, 27, 28]) {
+        if (!lm[idx]) continue
+        const isActive = activeIdx === idx
+        dot(lm[idx], isActive ? 8 : 6, isActive ? DARK : BLUE, WHITE, 2)
+        // Anillo visual de "arrastra aquí"
+        if (!isActive) {
+          ctx.beginPath(); ctx.arc(lm[idx].x, lm[idx].y, 10 * S, 0, Math.PI * 2)
+          ctx.strokeStyle = 'rgba(55,138,221,0.2)'; ctx.lineWidth = 1 * S; ctx.stroke()
+        }
+      }
+      // Pies (solo visual, no arrastrables directamente salvo tobillo)
+      for (const idx of [31, 32]) {
+        if (lm[idx]) dot(lm[idx], 3.5, SKIN, BLUE, 1.5)
+      }
+    }
 
-  const headFinalX = HCX + 18 * Math.sin(d2r(cuello ? cuello.angulo - 90 : 0));
-  const hipFinalX = HIP.x + 10 * Math.sin(d2r(tronco ? (180 - tronco.angulo) * 0.4 : 0));
+    // Leyenda
+    if (mostrarLeyenda) {
+      const ly = H - 14 * S
+      ctx.lineWidth = 2.5 * S; ctx.lineCap = 'round'
+      ctx.strokeStyle = BLUE
+      ctx.beginPath(); ctx.moveTo(4 * S, ly); ctx.lineTo(16 * S, ly); ctx.stroke()
+      ctx.fillStyle = BLUE; ctx.font = `${Math.round(8 * S)}px sans-serif`; ctx.textAlign = 'left'
+      ctx.fillText('activo', 19 * S, ly + 3 * S)
+      ctx.strokeStyle = GRAY
+      ctx.beginPath(); ctx.moveTo(62 * S, ly); ctx.lineTo(74 * S, ly); ctx.stroke()
+      ctx.fillStyle = GRAY; ctx.fillText('fijo', 77 * S, ly + 3 * S)
+    }
+  }, [W, H, S, onAnguloChange, mostrarLeyenda])
 
-  const useHombroDer  = !!hombroDer; const useCodoDer = !!codoDer && !hombroDer;
-  const useHombroIzq  = !!hombroIzq; const useCodoIzq = !!codoIzq && !hombroIzq;
-  const useCaderaDer  = !!caderaDer; const useRodillaDer = !!rodillaDer && !caderaDer;
-  const useTobilloDer = !!tobilloDer && !caderaDer && !rodillaDer;
-  const useCaderaIzq  = !!caderaIzq; const useRodillaIzq = !!rodillaIzq && !caderaIzq;
-  const useTobilloIzq = !!tobilloIzq && !caderaIzq && !rodillaIzq;
+  // ── Eventos ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !onAnguloChange) return
 
-  const w = Math.round(180 * size); const h = Math.round(280 * size);
+    const getPos = (e: MouseEvent | TouchEvent) => {
+      const r = canvas.getBoundingClientRect()
+      const src = 'touches' in e ? e.touches[0] : e
+      return { x: src.clientX - r.left, y: src.clientY - r.top }
+    }
 
-  console.log('articulacionesProcesadas:', articulacionesProcesadas)
-  console.log('buscando cadera derecha:', articulacionesProcesadas.find(a => a.nombre_articulacion.toLowerCase().includes('cadera derecha')))
-  console.log('buscando cadera izquierda:', articulacionesProcesadas.find(a => a.nombre_articulacion.toLowerCase().includes('cadera izquierda')))
-  console.log('nombre exacto:', articulacionesProcesadas[0]?.nombre_articulacion)
-console.log('chars:', [...(articulacionesProcesadas[0]?.nombre_articulacion ?? '')].map(c => c.charCodeAt(0)))
+    const findHandle = (x: number, y: number): number | null => {
+      const lm = lmRef.current
+      for (const idx of [13, 14, 15, 16, 25, 26, 27, 28, 31, 32]) {
+        if (lm[idx] && Math.hypot(x - lm[idx].x, y - lm[idx].y) < 14 * S) return idx
+      }
+      return null
+    }
+
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const { x, y } = getPos(e)
+      const h = findHandle(x, y)
+      if (h !== null) {
+        draggingRef.current = h
+        canvas.style.cursor = 'grabbing'
+        if (e.cancelable) e.preventDefault()
+      }
+    }
+
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (draggingRef.current === null) {
+        const { x, y } = getPos(e)
+        canvas.style.cursor = findHandle(x, y) ? 'grab' : 'default'
+        return
+      }
+      const { x, y } = getPos(e)
+      const idx    = draggingRef.current
+      const bounds = getBounds(idx)
+      const lm     = lmRef.current
+
+      // ── Mover SOLO el punto arrastrado — sin cadena ───────────────────────
+      lm[idx] = {
+        x: Math.max(bounds.xMin, Math.min(bounds.xMax, x)),
+        y: Math.max(bounds.yMin, Math.min(bounds.yMax, y)),
+      }
+      // Sin propagateChildren — cada punto es independiente
+
+      notifyChanges(idx)
+      draw(idx)
+      if (e.cancelable) e.preventDefault()
+    }
+
+    const onUp = () => {
+      if (draggingRef.current !== null) {
+        draggingRef.current = null
+        canvas.style.cursor = 'default'
+        draw(null)
+      }
+    }
+
+    canvas.addEventListener('mousedown', onDown)
+    canvas.addEventListener('touchstart', onDown, { passive: false })
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('touchmove', onMove, { passive: false })
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('touchend', onUp)
+
+    return () => {
+      canvas.removeEventListener('mousedown', onDown)
+      canvas.removeEventListener('touchstart', onDown)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('touchmove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('touchend', onUp)
+    }
+  }, [draw, getBounds, notifyChanges, onAnguloChange, S])
+
+  // ── Control de re-inicialización ──────────────────────────────────────────
+  // Solo reinicializa cuando cambian los ÁNGULOS o el conjunto de articulaciones.
+  // Cambios de tolerancia → solo redibuja, NO mueve el muñeco.
+  const anglesKey = articulaciones.map(a => `${a.nombre_articulacion}:${a.angulo}`).join('|')
+  const namesKey  = articulaciones.map(a => a.nombre_articulacion).join('|')
+
+  const isInitialMount = useRef(true)
+  const lastAnglesKey  = useRef('')
+  const lastNamesKey   = useRef('')
+
+  useEffect(() => {
+    const first         = isInitialMount.current
+    isInitialMount.current = false
+
+    const anglesChanged = anglesKey !== lastAnglesKey.current
+    const namesChanged  = namesKey  !== lastNamesKey.current
+
+    lastAnglesKey.current = anglesKey
+    lastNamesKey.current  = namesKey
+
+    if (first || anglesChanged || namesChanged) {
+      initLandmarks()
+    }
+    draw(null)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anglesKey, namesKey, mostrarLeyenda])
 
   return (
-    <svg width={w} height={h} viewBox="0 0 180 280" style={{ display: 'block' }}>
-      {/* ── ESPEJO VISUAL ── */}
-      <g transform="scale(-1,1) translate(-180,0)">
-        <circle cx={headFinalX} cy={HCY} r={13} fill="none" stroke={cuello ? RED : GRAY} strokeWidth={cuello ? 2.5 : 2}/>
-        <line x1={headFinalX} y1={HCY + 13} x2={NECK.x} y2={NECK.y} stroke={cuello ? RED : GRAY} strokeWidth={cuello ? 2.5 : 2} strokeLinecap="round"/>
-        <line x1={NECK.x} y1={NECK.y} x2={hipFinalX} y2={HIP.y} stroke={tronco ? RED : GRAY} strokeWidth={tronco ? 3 : 2.5} strokeLinecap="round"/>
-        <line x1={SHL.x} y1={SHL.y} x2={SHR.x} y2={SHR.y} stroke={GRAY} strokeWidth={2.5} strokeLinecap="round"/>
-        <line x1={HIPL.x} y1={HIPL.y} x2={HIPR.x} y2={HIPR.y} stroke={GRAY} strokeWidth={2.5} strokeLinecap="round"/>
+    <canvas
+      ref={canvasRef}
+      width={W}
+      height={H}
+      style={{ display: 'block', cursor: onAnguloChange ? 'default' : 'auto' }}
+    />
+  )
+}
 
-        {/* BRAZO DERECHO (Pintado con lógica de izquierdo) */}
-        {useHombroDer ? (<>
-          <line x1={SHR.x} y1={SHR.y} x2={elbowHombroDer.x} y2={elbowHombroDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={elbowHombroDer.x} y1={elbowHombroDer.y} x2={wristHombroDer.x} y2={wristHombroDer.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
-          <Dot cx={SHR.x} cy={SHR.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={elbowHombroDer.x} cy={elbowHombroDer.y} r={5} fill={SKIN} stroke={RED}/>
-          <Dot cx={wristHombroDer.x} cy={wristHombroDer.y} r={4} fill={SKIN} stroke={RED}/>
-        </>) : useCodoDer ? (<>
-          <line x1={SHR.x} y1={SHR.y} x2={elbowDerPos.x} y2={elbowDerPos.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={elbowDerPos.x} y1={elbowDerPos.y} x2={wristDer.x} y2={wristDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={SHR.x} cy={SHR.y} r={5} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={elbowDerPos.x} cy={elbowDerPos.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={wristDer.x} cy={wristDer.y} r={4.5} fill={SKIN} stroke={RED}/>
-        </>) : (<>
-          <line x1={SHR.x} y1={SHR.y} x2={elbowDerPos.x} y2={elbowDerPos.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <line x1={elbowDerPos.x} y1={elbowDerPos.y} x2={wristDer.x} y2={wristDer.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <Dot cx={SHR.x} cy={SHR.y} r={4} fill={SKIN} stroke={GRAY}/>
-          <Dot cx={elbowDerPos.x} cy={elbowDerPos.y} r={4} fill={SKIN} stroke={GRAY}/>
-        </>)}
+// ─── MunequitoConControles ─────────────────────────────────────────────────────
+interface PanelProps {
+  articulaciones: PoseArticulacionSimple[]
+  onAnguloChange: (nombre: string, angulo: number) => void
+  onToleranciaChange?: (nombre: string, tolerancia: number) => void
+  size?: number
+}
 
-        {/* BRAZO IZQUIERDO (Pintado con lógica de derecho) */}
-        {useHombroIzq ? (<>
-          <line x1={SHL.x} y1={SHL.y} x2={elbowHombroIzq.x} y2={elbowHombroIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={elbowHombroIzq.x} y1={elbowHombroIzq.y} x2={wristHombroIzq.x} y2={wristHombroIzq.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
-          <Dot cx={SHL.x} cy={SHL.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={elbowHombroIzq.x} cy={elbowHombroIzq.y} r={5} fill={SKIN} stroke={RED}/>
-          <Dot cx={wristHombroIzq.x} cy={wristHombroIzq.y} r={4} fill={SKIN} stroke={RED}/>
-        </>) : useCodoIzq ? (<>
-          <line x1={SHL.x} y1={SHL.y} x2={elbowIzqPos.x} y2={elbowIzqPos.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={elbowIzqPos.x} y1={elbowIzqPos.y} x2={wristIzq.x} y2={wristIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={SHL.x} cy={SHL.y} r={5} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={elbowIzqPos.x} cy={elbowIzqPos.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={wristIzq.x} cy={wristIzq.y} r={4.5} fill={SKIN} stroke={RED}/>
-        </>) : (<>
-          <line x1={SHL.x} y1={SHL.y} x2={elbowIzqPos.x} y2={elbowIzqPos.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <line x1={elbowIzqPos.x} y1={elbowIzqPos.y} x2={wristIzq.x} y2={wristIzq.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <Dot cx={SHL.x} cy={SHL.y} r={4} fill={SKIN} stroke={GRAY}/>
-          <Dot cx={elbowIzqPos.x} cy={elbowIzqPos.y} r={4} fill={SKIN} stroke={GRAY}/>
-        </>)}
-
-        {/* PIERNA DERECHA */}
-        {useCaderaDer ? (<>
-          <line x1={HIPR.x} y1={HIPR.y} x2={thighDerC.x} y2={thighDerC.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={thighDerC.x} y1={thighDerC.y} x2={shinDerC.x} y2={shinDerC.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
-          <Dot cx={HIPR.x} cy={HIPR.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={thighDerC.x} cy={thighDerC.y} r={5} fill={SKIN} stroke={RED}/>
-          <Dot cx={shinDerC.x} cy={shinDerC.y} r={4} fill={SKIN} stroke={RED}/>
-        </>) : useRodillaDer ? (<>
-          <line x1={HIPR.x} y1={HIPR.y} x2={kneeDer.x} y2={kneeDer.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={kneeDer.x} y1={kneeDer.y} x2={ankleDer.x} y2={ankleDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={HIPR.x} cy={HIPR.y} r={5} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={kneeDer.x} cy={kneeDer.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={ankleDer.x} cy={ankleDer.y} r={4.5} fill={SKIN} stroke={RED}/>
-        </>) : useTobilloDer ? (<>
-          <line x1={HIPR.x} y1={HIPR.y} x2={kneeDer.x} y2={kneeDer.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={kneeDer.x} y1={kneeDer.y} x2={ankleDerT.x} y2={ankleDerT.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={ankleDerT.x} y1={ankleDerT.y} x2={toeDer.x} y2={toeDer.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={HIPR.x} cy={HIPR.y} r={4} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={kneeDer.x} cy={kneeDer.y} r={5} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={ankleDerT.x} cy={ankleDerT.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={toeDer.x} cy={toeDer.y} r={4} fill={SKIN} stroke={RED}/>
-        </>) : (<>
-          <line x1={HIPR.x} y1={HIPR.y} x2={kneeDer.x} y2={kneeDer.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <line x1={kneeDer.x} y1={kneeDer.y} x2={ankleDer.x} y2={ankleDer.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <Dot cx={HIPR.x} cy={HIPR.y} r={4} fill={SKIN} stroke={GRAY}/>
-          <Dot cx={kneeDer.x} cy={kneeDer.y} r={4} fill={SKIN} stroke={GRAY}/>
-        </>)}
-
-        {/* PIERNA IZQUIERDA */}
-        {useCaderaIzq ? (<>
-          <line x1={HIPL.x} y1={HIPL.y} x2={thighIzqC.x} y2={thighIzqC.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={thighIzqC.x} y1={thighIzqC.y} x2={shinIzqC.x} y2={shinIzqC.y} stroke={RED} strokeWidth={W - 0.5} strokeLinecap="round"/>
-          <Dot cx={HIPL.x} cy={HIPL.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={thighIzqC.x} cy={thighIzqC.y} r={5} fill={SKIN} stroke={RED}/>
-          <Dot cx={shinIzqC.x} cy={shinIzqC.y} r={4} fill={SKIN} stroke={RED}/>
-        </>) : useRodillaIzq ? (<>
-          <line x1={HIPL.x} y1={HIPL.y} x2={kneeIzq.x} y2={kneeIzq.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={kneeIzq.x} y1={kneeIzq.y} x2={ankleIzq.x} y2={ankleIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={HIPL.x} cy={HIPL.y} r={5} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={kneeIzq.x} cy={kneeIzq.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={ankleIzq.x} cy={ankleIzq.y} r={4.5} fill={SKIN} stroke={RED}/>
-        </>) : useTobilloIzq ? (<>
-          <line x1={HIPL.x} y1={HIPL.y} x2={kneeIzq.x} y2={kneeIzq.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={kneeIzq.x} y1={kneeIzq.y} x2={ankleIzqT.x} y2={ankleIzqT.y} stroke={ACTIVE} strokeWidth={W} strokeLinecap="round"/>
-          <line x1={ankleIzqT.x} y1={ankleIzqT.y} x2={toeIzq.x} y2={toeIzq.y} stroke={RED} strokeWidth={W} strokeLinecap="round"/>
-          <Dot cx={HIPL.x} cy={HIPL.y} r={4} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={kneeIzq.x} cy={kneeIzq.y} r={5} fill={SKIN} stroke={ACTIVE}/>
-          <Dot cx={ankleIzqT.x} cy={ankleIzqT.y} r={7} fill={DARK} stroke="white"/>
-          <Dot cx={toeIzq.x} cy={toeIzq.y} r={4} fill={SKIN} stroke={RED}/>
-        </>) : (<>
-          <line x1={HIPL.x} y1={HIPL.y} x2={kneeIzq.x} y2={kneeIzq.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <line x1={kneeIzq.x} y1={kneeIzq.y} x2={ankleIzq.x} y2={ankleIzq.y} stroke={GRAY} strokeWidth={WG} strokeLinecap="round"/>
-          <Dot cx={HIPL.x} cy={HIPL.y} r={4} fill={SKIN} stroke={GRAY}/>
-          <Dot cx={kneeIzq.x} cy={kneeIzq.y} r={4} fill={SKIN} stroke={GRAY}/>
-        </>)}
-      </g>
-
-      {/* LEYENDA (Sin espejo) */}
-      {mostrarLeyenda && (<>
-        <line x1="4" y1="270" x2="16" y2="270" stroke={ACTIVE} strokeWidth="2.5" strokeLinecap="round"/>
-        <text x="19" y="274" fontSize="8" fill={ACTIVE} fontFamily="sans-serif">fijo</text>
-        <line x1="42" y1="270" x2="54" y2="270" stroke={RED} strokeWidth="2.5" strokeLinecap="round"/>
-        <text x="57" y="274" fontSize="8" fill={RED} fontFamily="sans-serif">móvil</text>
-        <circle cx="96" cy="270" r="3.5" fill={DARK}/>
-        <text x="102" y="274" fontSize="8" fill={DARK} fontFamily="sans-serif">articulación</text>
-      </>)}
-    </svg>
+export function MunequitoConControles({
+  articulaciones,
+  onAnguloChange,
+  onToleranciaChange,
+  size = 1,
+}: PanelProps) {
+  return (
+    <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+      <MunequitoReferencia
+        articulaciones={articulaciones}
+        onAnguloChange={onAnguloChange}
+        size={size}
+        mostrarLeyenda={true}
+      />
+      {articulaciones.length > 0 && (
+        <div style={{ minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '14px', padding: '14px', background: '#f8faff', borderRadius: '12px', border: '1px solid #d0e4f7' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#378ADD', letterSpacing: '1px' }}>ÁNGULOS</div>
+          {articulaciones.map(art => (
+            <div key={art.nombre_articulacion} style={{ marginBottom: '15px', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#333', textTransform: 'capitalize' }}>{art.nombre_articulacion}</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 900, color: '#378ADD' }}>{art.angulo}°</span>
+              </div>
+              <input type="range" min={0} max={180} step={1} value={art.angulo}
+                onChange={e => onAnguloChange(art.nombre_articulacion, Number(e.target.value))}
+                style={{ width: '100%', accentColor: '#378ADD', cursor: 'pointer' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: '#aaa', marginTop: '2px' }}>
+                <span>0°</span><span>90°</span><span>180°</span>
+              </div>
+              {onToleranciaChange && (
+                <div style={{ marginTop: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '0.68rem', color: '#888' }}>Tolerancia</span>
+                    <span style={{ fontSize: '0.68rem', color: '#888', fontWeight: 'bold' }}>±{art.tolerancia}°</span>
+                  </div>
+                  <input type="range" min={5} max={40} step={1} value={art.tolerancia}
+                    onChange={e => { e.stopPropagation(); onToleranciaChange(art.nombre_articulacion, parseInt(e.target.value)) }}
+                    style={{ width: '100%', accentColor: '#6c8fc7', cursor: 'pointer', opacity: 0.8 }} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
