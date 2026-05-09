@@ -12,7 +12,7 @@ interface EjercicioResumen {
   icono: string | null
   repeticiones: number | null
   tiene_ia: boolean
-  es_catalogo: boolean          // ← nuevo
+  es_catalogo: boolean
   total_poses: number
   total_articulaciones: number
   fase_nombre: string
@@ -279,10 +279,10 @@ export function SectionRutina() {
                         ? ej.es_catalogo
                           // Ejercicio del catálogo: mostrar poses y keypoints si los tenemos
                           ? ej.total_poses > 0
-                            ? `🤖 ${ej.total_poses} poses · ${ej.total_articulaciones} puntos monitoreados`
+                            ? `🤖 ${ej.total_poses} poses`
                             : '🤖 Evaluación IA por catálogo'
                           // Ejercicio legacy con articulaciones
-                          : `🤖 ${ej.total_poses} poses · ${ej.total_articulaciones} articulaciones monitoreadas`
+                          : `🤖 ${ej.total_poses} poses`
                         : 'Sin evaluación IA — ejercicio manual'}
                       {ej.repeticiones && ` · ${ej.repeticiones} reps`}
                     </div>
@@ -325,10 +325,8 @@ export function SectionRutina() {
                 <div className="doc-tip" style={{ background: 'var(--blue-xlight)', border: '1px solid var(--blue-light)' }}>
                   <strong>Configuración:</strong>{' '}
                   {selected.es_catalogo
-                    ? selected.total_poses > 0
-                      ? <>El sistema validará <strong>{selected.total_articulaciones} puntos</strong> distribuidos en <strong>{selected.total_poses} poses</strong> en tiempo real.</>
-                      : 'Ejercicio con evaluación IA por poses predefinidas del catálogo.'
-                    : <>El sistema validará <strong>{selected.total_articulaciones} ángulos</strong> distribuidos en <strong>{selected.total_poses} poses</strong> en tiempo real.</>
+                    ? <>El sistema evaluará <strong>{selected.total_poses} poses</strong> en tiempo real.</>
+                    : <>El sistema evaluará <strong>{selected.total_poses} poses</strong> en tiempo real.</>
                   }
                   {selected.repeticiones && ` Realiza ${selected.repeticiones} repeticiones.`}
                 </div>
