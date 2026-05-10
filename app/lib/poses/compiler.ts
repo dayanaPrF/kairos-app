@@ -40,7 +40,6 @@ export interface EjercicioCatalogo {
 }
 
 // ─── Tipo extendido para soportar Modo 2 ─────────────────────────────────────
-// Las poses del Modo 2 tienen id_pose pero articulaciones: []
 interface PoseDBConIdPose extends PoseDB {
   id_pose?: string
 }
@@ -58,10 +57,6 @@ function getTolerance(nombreArticulacion: string, toleranciaDB: number): number 
 
 // ══════════════════════════════════════════════════════════════════════════════
 // compilarEjercicio
-//
-//   Modo 1 → id_ejercicio_catalogo presente
-//   Modo 2 → secuencia_poses con id_pose (poses sueltas del catálogo)  ← FIX
-//   Modo 3 → flujo legacy con articulaciones
 // ══════════════════════════════════════════════════════════════════════════════
 export async function compilarEjercicio(
   ejercicio: {
@@ -80,20 +75,15 @@ export async function compilarEjercicio(
   }
 ): Promise<EjercicioCompilado | null> {
 
-  // Modo 1: ejercicio predefinido del catálogo
   if (ejercicio.id_ejercicio_catalogo) {
     return compilarDesde_Catalogo(ejercicio)
   }
 
-  // Modo 2: poses sueltas del catálogo
-  // Detectado por la presencia de id_pose en secuencia_poses.
-  // Estas poses tienen articulaciones: [] — keypoints vienen del catálogo.
   const posesConIdPose = (ejercicio.secuencia_poses ?? []).filter(p => !!(p as any).id_pose)
   if (posesConIdPose.length > 0) {
     return compilarDesde_PosesCatalogo(ejercicio, posesConIdPose)
   }
 
-  // Modo 3: flujo legacy con articulaciones
   return compilarDesde_Legacy(ejercicio)
 }
 
@@ -123,9 +113,11 @@ async function compilarDesde_Catalogo(ejercicio: {
   if (!secuencia?.length) return null
 
   const poseIds = secuencia.map(s => s.id_pose)
+
+  // ← ahora también traemos imagen_url
   const { data: poses, error: errPoses } = await supabase
     .from('ai_pose_catalogo')
-    .select('id_pose, nombre, keypoints')
+    .select('id_pose, nombre, keypoints, imagen_url')
     .in('id_pose', poseIds)
 
   if (errPoses || !poses?.length) {
@@ -143,10 +135,11 @@ async function compilarDesde_Catalogo(ejercicio: {
       const keypoints = pose.keypoints as KeypointRule[]
       if (!keypoints?.length) return []
       return [{
-        orden:    item.orden,
-        nombre:   item.nombre_override ?? pose.nombre,
-        hold_sec: item.hold_sec,
+        orden:     item.orden,
+        nombre:    item.nombre_override ?? pose.nombre,
+        hold_sec:  item.hold_sec,
         keypoints,
+        imagen_url: (pose as any).imagen_url ?? null,  // ← imagen de referencia
       }]
     })
 
@@ -163,8 +156,6 @@ async function compilarDesde_Catalogo(ejercicio: {
 }
 
 // ─── Modo 2: poses sueltas del catálogo ──────────────────────────────────────
-// secuencia_poses tiene: { orden, nombre, hold_sec, id_pose, articulaciones: [] }
-// Resolvemos keypoints leyendo ai_pose_catalogo por id_pose.
 
 async function compilarDesde_PosesCatalogo(
   ejercicio: {
@@ -181,9 +172,10 @@ async function compilarDesde_PosesCatalogo(
     .map(p => (p as any).id_pose as string)
     .filter(Boolean)
 
+  // ← ahora también traemos imagen_url
   const { data: posesCatalogo, error } = await supabase
     .from('ai_pose_catalogo')
-    .select('id_pose, nombre, keypoints')
+    .select('id_pose, nombre, keypoints, imagen_url')
     .in('id_pose', poseIds)
 
   if (error || !posesCatalogo?.length) {
@@ -202,10 +194,11 @@ async function compilarDesde_PosesCatalogo(
       const keypoints = poseCat.keypoints as KeypointRule[]
       if (!keypoints?.length) return []
       return [{
-        orden:    poseSeq.orden,
-        nombre:   poseSeq.nombre || poseCat.nombre,
-        hold_sec: poseSeq.hold_sec,
+        orden:     poseSeq.orden,
+        nombre:    poseSeq.nombre || poseCat.nombre,
+        hold_sec:  poseSeq.hold_sec,
         keypoints,
+        imagen_url: (poseCat as any).imagen_url ?? null,  // ← imagen de referencia
       }]
     })
 
@@ -272,6 +265,7 @@ async function compilarDesde_Legacy(ejercicio: {
       orden:    pose.orden,
       nombre:   pose.nombre,
       hold_sec: pose.hold_sec,
+      imagen_url: null,   // ← legacy siempre usa muñequito
       keypoints: pose.articulaciones.flatMap(art => {
         const cfg = configMap.get(art.id_articulacion)
         if (!cfg || cfg.puntos_mediapipe.length < 3) return []

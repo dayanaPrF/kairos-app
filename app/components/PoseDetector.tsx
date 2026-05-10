@@ -38,16 +38,13 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
   const [transicionando, setTransicionando]           = useState(false)
   const [transicionNombre, setTransicionNombre]       = useState('')
 
-  // ── REFS para el estado crítico del timer ─────────────────────────────────
-  // Usamos refs para los valores que el loop del timer necesita leer sin
-  // depender del ciclo de re-render de React, evitando race conditions.
-  const pasoActualRef         = useRef(0)
-  const repActualRef          = useRef(1)
-  const transicionandoRef     = useRef(false)
+  const pasoActualRef          = useRef(0)
+  const repActualRef           = useRef(1)
+  const transicionandoRef      = useRef(false)
   const ejercicioFinalizadoRef = useRef(false)
-  const pasoCompletadoRef     = useRef(false)
-  const timerRef              = useRef<NodeJS.Timeout | null>(null)
-  const timeLeftRef           = useRef(ejercicio.pasos[0].hold_sec || 3)
+  const pasoCompletadoRef      = useRef(false)
+  const timerRef               = useRef<NodeJS.Timeout | null>(null)
+  const timeLeftRef            = useRef(ejercicio.pasos[0].hold_sec || 3)
 
   const paso: PoseCompiledStep =
     ejercicio.pasos[pasoActual] ?? ejercicio.pasos[ejercicio.pasos.length - 1]
@@ -64,22 +61,19 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
 
   const { iniciarSesion, acumularScore, cerrarSesion } = useSesion({ idRutinasPaciente })
 
-  // ── Sincronizar refs con estado ───────────────────────────────────────────
   useEffect(() => { pasoActualRef.current = pasoActual }, [pasoActual])
   useEffect(() => { repActualRef.current = repActual }, [repActual])
   useEffect(() => { transicionandoRef.current = transicionando }, [transicionando])
   useEffect(() => { ejercicioFinalizadoRef.current = ejercicioFinalizado }, [ejercicioFinalizado])
 
-  // ── Resetear paso cuando cambia pasoActual ────────────────────────────────
   useEffect(() => {
     const nuevoPaso = ejercicio.pasos[pasoActual]
     if (!nuevoPaso) return
-    pasoRef.current        = nuevoPaso
+    pasoRef.current           = nuevoPaso
     pasoCompletadoRef.current = false
-    timeLeftRef.current    = nuevoPaso.hold_sec || 3
+    timeLeftRef.current       = nuevoPaso.hold_sec || 3
     setTimeLeft(nuevoPaso.hold_sec || 3)
     setStatus({ result: null, fps: 0 })
-    // NO reseteamos transicionando aquí — lo hace avanzarPaso con setTimeout
   }, [pasoActual, ejercicio.pasos])
 
   const getLatinaVoice = useCallback(() => {
@@ -127,7 +121,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
     window.speechSynthesis.speak(u)
   }, [getLatinaVoice])
 
-  // ── avanzarPaso — lee desde refs, no desde estado ─────────────────────────
   const avanzarPaso = useCallback(() => {
     const pasoIdx = pasoActualRef.current
     const repNum  = repActualRef.current
@@ -136,7 +129,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
     const esUltimaRep  = repNum >= totalRepeticiones
 
     if (!esUltimoPaso) {
-      // Hay más poses en esta repetición
       const siguientePaso = ejercicio.pasos[pasoIdx + 1]
       speak(`Siguiente pose: ${siguientePaso.nombre}`, true)
       setTransicionando(true)
@@ -150,7 +142,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
       }, 1200)
 
     } else if (!esUltimaRep) {
-      // Hay más repeticiones
       const sigRep = repNum + 1
       speak(`Repetición ${sigRep} de ${totalRepeticiones}`, true)
       setTransicionando(true)
@@ -169,7 +160,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
       }, 1500)
 
     } else {
-      // Ejercicio completo
       ejercicioFinalizadoRef.current = true
       setEjercicioFinalizado(true)
       speak('¡Ejercicio completado! Excelente trabajo.', true)
@@ -178,21 +168,15 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
     }
   }, [totalPasos, totalRepeticiones, ejercicio.pasos, speak, onComplete, cerrarSesion])
 
-  // ── Lógica del timer — controlada por refs para evitar race conditions ────
-  // Se ejecuta cuando cambia la validez de la pose actual.
-  // NO depende de pasoActual/repActual/transicionando como estado —
-  // los lee desde refs para evitar que el efecto se re-ejecute en cada render.
   const isValid   = status.result?.isValid
   const hasPerson = !!status.result
 
   useEffect(() => {
-    // Limpiar timer anterior siempre
     if (timerRef.current) {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
 
-    // No arrancar timer si estamos bloqueados
     if (
       pasoCompletadoRef.current ||
       ejercicioFinalizadoRef.current ||
@@ -201,12 +185,10 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
       !isValid
     ) return
 
-    // Pose válida — arrancar countdown
     const pasoActivo = pasoRef.current
     speak(`${pasoActivo.nombre}, mantén`, true)
 
     timerRef.current = setInterval(() => {
-      // Re-verificar estado desde refs en cada tick
       if (
         pasoCompletadoRef.current ||
         ejercicioFinalizadoRef.current ||
@@ -238,7 +220,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
         timerRef.current = null
       }
     }
-  }, [isValid, hasPerson]) // ← SOLO estas dos dependencias — el resto va por refs
+  }, [isValid, hasPerson])
 
   const cleanup = useCallback(() => {
     if (streamRef.current) {
@@ -310,37 +292,23 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
           canvas.height = video.videoHeight
         }
 
-        // ── Canvas visible (espejado) ──────────────────────────────────────
-        // El video frontal ya viene espejado — solo dibujamos tal cual
-        // para que el usuario se vea como en espejo.
         ctx.save()
         ctx.translate(canvas.width, 0)
         ctx.scale(-1, 1)
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         ctx.restore()
 
-        // Detectar sobre el video directamente.
-        // La cámara frontal entrega el stream ya espejado, por lo que
-        // los landmarks de MediaPipe también salen espejados:
-        // el hombro derecho anatómico aparece en x < 0.5 (lado izquierdo).
-        // Para validar correctamente necesitamos:
-        //   1. Espejear x → coordenadas anatómicas reales
-        //   2. Intercambiar índices izq ↔ der → etiquetas correctas
         const result = landmarkerRef.current.detectForVideo(video, performance.now())
         if (result.landmarks?.length > 0) {
           const raw = result.landmarks[0]
 
-          // Para dibujar: espejear x para que el usuario se vea como en espejo
           const mirrored = raw.map(lm => ({
             x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
           }))
 
-          // Para validar: espejear x + intercambiar índices izq↔der
-          // Así landmark[12] (hombro der) corresponde realmente al lado derecho
           const unmirrored = raw.map(lm => ({
             x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
           }))
-          // Intercambiar pares izquierdo ↔ derecho
           const SWAP: [number, number][] = [
             [11,12],[13,14],[15,16],[17,18],[19,20],[21,22],
             [23,24],[25,26],[27,28],[29,30],[31,32],
@@ -355,7 +323,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             }
           }
 
-          // Validar con landmarks anatomicamente correctos
           const validation = validatePose(forValidation, pasoRef.current)
           const color      = validation.isValid ? '#00d26e' : '#dc3c3c'
 
@@ -397,13 +364,13 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
   const { result, fps } = status
 
   const reiniciar = useCallback(() => {
-    pasoActualRef.current         = 0
-    repActualRef.current          = 1
-    pasoCompletadoRef.current     = false
-    transicionandoRef.current     = false
+    pasoActualRef.current          = 0
+    repActualRef.current           = 1
+    pasoCompletadoRef.current      = false
+    transicionandoRef.current      = false
     ejercicioFinalizadoRef.current = false
-    timeLeftRef.current           = ejercicio.pasos[0].hold_sec || 3
-    pasoRef.current               = ejercicio.pasos[0]
+    timeLeftRef.current            = ejercicio.pasos[0].hold_sec || 3
+    pasoRef.current                = ejercicio.pasos[0]
     setPasoActual(0)
     setRepActual(1)
     setEjercicioFinalizado(false)
@@ -494,43 +461,33 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
             <div style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', marginTop: '2px' }}>{paso.nombre}</div>
           </div>
 
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}>
-            <MunequitoReferencia
-              articulaciones={paso.keypoints.map(kp => ({
-                nombre_articulacion: kp.nombreArticulacion ?? '',
-                angulo: Math.round((kp.minAngle + kp.maxAngle) / 2),
-                tolerancia: Math.round((kp.maxAngle - kp.minAngle) / 2),
-              }))}
-              size={1.4}
-              mostrarLeyenda={true}
-            />
-          </div>
-
-          <div style={{ padding: '8px 12px 12px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {paso.keypoints.map((kp, i) => {
-              const artResult = result?.keypointResults.find(r => r.landmark === kp.landmark)
-              const ok        = artResult?.passed ?? false
-              const angActual = artResult?.actual !== null && artResult?.actual !== undefined
-                ? Math.round(artResult.actual) : null
-              return (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '5px 8px', borderRadius: '8px', background: '#1a1a1a',
-                  border: `1px solid ${ok ? '#00d26e33' : '#333'}`,
-                }}>
-                  <span style={{ fontSize: '14px' }}>{ok ? '✅' : '⭕'}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '11px', color: ok ? '#00d26e' : '#888', fontWeight: 600 }}>
-                      {kp.nombreArticulacion}
-                    </div>
-                    <div style={{ fontSize: '10px', color: '#555' }}>
-                      Objetivo: {Math.round((kp.minAngle + kp.maxAngle) / 2)}°
-                      {angActual !== null && ` · Actual: ${angActual}°`}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+          {/* ── REFERENCIA VISUAL: imagen del catálogo o muñequito ────────── */}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px', overflow: 'hidden' }}>
+            {paso.imagen_url ? (
+              // Pose del catálogo → mostrar imagen de referencia
+              <img
+                src={paso.imagen_url}
+                alt={paso.nombre}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain',
+                  borderRadius: '12px',
+                  opacity: 0.92,
+                }}
+              />
+            ) : (
+              // Pose personalizada (legacy) → mostrar muñequito
+              <MunequitoReferencia
+                articulaciones={paso.keypoints.map(kp => ({
+                  nombre_articulacion: kp.nombreArticulacion ?? '',
+                  angulo: Math.round((kp.minAngle + kp.maxAngle) / 2),
+                  tolerancia: Math.round((kp.maxAngle - kp.minAngle) / 2),
+                }))}
+                size={1.4}
+                mostrarLeyenda={true}
+              />
+            )}
           </div>
         </div>
 

@@ -11,8 +11,8 @@ export interface LandmarkPoint {
 export interface PoseArticulacionDB {
   id_articulacion: string
   nombre_articulacion: string
-  angulo: number       // ángulo objetivo
-  tolerancia: number   // ±tolerancia
+  angulo: number
+  tolerancia: number
 }
 
 // Una pose completa tal como viene del JSONB de Supabase
@@ -27,17 +27,17 @@ export interface PoseDB {
 export interface ArticulacionConfig {
   id_articulacion: string
   nombre_articulacion: string
-  puntos_mediapipe: string[]  // [idx_A, idx_B_vertice, idx_C]
+  puntos_mediapipe: string[]
 }
 
 // ── Formato interno que usa validatePose ──────────────────────────────────────
 
 export interface KeypointRule {
-  landmark: number    // índice MediaPipe del vértice (B)
-  relativeTo: number  // índice MediaPipe del punto A
-  anchor: number      // índice MediaPipe del punto C
-  minAngle: number    // angulo - tolerancia
-  maxAngle: number    // angulo + tolerancia
+  landmark: number
+  relativeTo: number
+  anchor: number
+  minAngle: number
+  maxAngle: number
   nombreArticulacion: string
 }
 
@@ -47,6 +47,7 @@ export interface PoseCompiledStep {
   nombre: string
   hold_sec: number
   keypoints: KeypointRule[]
+  imagen_url: string | null   // imagen de referencia del catálogo; null = mostrar muñequito
 }
 
 // El ejercicio completo listo para el detector
@@ -56,10 +57,10 @@ export interface EjercicioCompilado {
   descripcion: string | null
   icono: string | null
   repeticiones: number | null
-  pasos: PoseCompiledStep[]   // secuencia de poses en orden
+  pasos: PoseCompiledStep[]
 }
 
-// Resultado de validación (sin cambios, compatible con poseUtils existente)
+// Resultado de validación
 export interface ValidationResult {
   isValid: boolean
   score: number
