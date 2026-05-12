@@ -292,6 +292,7 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
           canvas.height = video.videoHeight
         }
 
+        // ── Dibujar espejado en canvas (el usuario se ve como en espejo) ──
         ctx.save()
         ctx.translate(canvas.width, 0)
         ctx.scale(-1, 1)
@@ -299,29 +300,22 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
         ctx.restore()
 
         const result = landmarkerRef.current.detectForVideo(video, performance.now())
+
         if (result.landmarks?.length > 0) {
           const raw = result.landmarks[0]
 
+          // ── Para dibujar: espejear X para que coincida con el canvas ──
           const mirrored = raw.map(lm => ({
             x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
           }))
 
-          const unmirrored = raw.map(lm => ({
+          // ── Para validar: espejear X para coordenadas anatómicas reales ──
+          // NO intercambiamos índices — landmark 11 = hombro izq, 13 = codo izq, etc.
+          // Esto hace que los keypoints del catálogo definidos con índices estándar
+          // de MediaPipe funcionen correctamente sin conversión adicional.
+          const forValidation = raw.map(lm => ({
             x: 1 - lm.x, y: lm.y, z: lm.z, visibility: lm.visibility,
           }))
-          const SWAP: [number, number][] = [
-            [11,12],[13,14],[15,16],[17,18],[19,20],[21,22],
-            [23,24],[25,26],[27,28],[29,30],[31,32],
-            [1,4],[2,5],[3,6],[7,8],[9,10],
-          ]
-          const forValidation = [...unmirrored]
-          for (const [a, b] of SWAP) {
-            if (forValidation[a] && forValidation[b]) {
-              const tmp = forValidation[a]
-              forValidation[a] = forValidation[b]
-              forValidation[b] = tmp
-            }
-          }
 
           const validation = validatePose(forValidation, pasoRef.current)
           const color      = validation.isValid ? '#00d26e' : '#dc3c3c'
@@ -464,7 +458,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
           {/* ── REFERENCIA VISUAL: imagen del catálogo o muñequito ────────── */}
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px', overflow: 'hidden' }}>
             {paso.imagen_url ? (
-              // Pose del catálogo → mostrar imagen de referencia
               <img
                 src={paso.imagen_url}
                 alt={paso.nombre}
@@ -477,7 +470,6 @@ export default function PoseDetector({ ejercicio, onBack, onComplete, idRutinasP
                 }}
               />
             ) : (
-              // Pose personalizada (legacy) → mostrar muñequito
               <MunequitoReferencia
                 articulaciones={paso.keypoints.map(kp => ({
                   nombre_articulacion: kp.nombreArticulacion ?? '',
